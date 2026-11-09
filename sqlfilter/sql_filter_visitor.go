@@ -1,9 +1,12 @@
 package sqlfilter
 
 import (
-	"filters"
+	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/XPD-Kasun/filters"
+	"github.com/XPD-Kasun/filters/op"
 )
 
 type SqlFilter struct {
@@ -12,6 +15,64 @@ type SqlFilter struct {
 	paramOrder  int
 	usesCaching bool
 	cmdCache    map[filters.Filter]string
+}
+
+var opLogicalMap = map[op.LogicalOperator]string{
+	op.And: "and",
+	op.Or:  "or",
+	op.Not: "not",
+}
+
+var opMap = map[op.Operator]string{
+	op.Gt:      ">",
+	op.Gte:     ">=",
+	op.Between: "BETWEEN",
+	op.Eq:      "=",
+	op.Lt:      "<",
+	op.Lte:     "<=",
+	op.In:      "IN",
+	op.Like:    "LIKE",
+	op.Nq:      "!=",
+}
+
+// VisitComparison implements [filters.Visitor].
+func (v *SqlFilter) VisitComparison(op filters.Comparison) error {
+	return comparison(v.buf, op.Field, opMap[op.Op], op.Value)
+}
+
+// VisitLogical implements [filters.Visitor].
+func (v *SqlFilter) VisitLogical(l filters.Logical) error {
+	w := v.buf
+
+	switch l.Op {
+	case op.And, op.Or:
+		w.WriteString("(")
+		for i, a := range l.Children {
+			if err := a.Accept(v); err != nil {
+				return err
+			}
+			if i != len(l.Children)-1 {
+				w.WriteString(" ")
+				w.WriteString(opLogicalMap[l.Op])
+				w.WriteString(" ")
+			}
+		}
+		w.WriteString(")")
+
+	case op.Not:
+		if len(l.Children) == 1 {
+			w.WriteString("NOT(")
+			if err := l.Children[0].Accept(v); err != nil {
+				return err
+			}
+			w.WriteString(")")
+		} else {
+			return errors.New("NOT operator can only have a single child")
+		}
+	}
+
+	return nil
+
 }
 
 var _ filters.Visitor = &SqlFilter{}
@@ -38,17 +99,12 @@ func (v *SqlFilter) VisitBetween(a filters.Between) error {
 	return nil
 }
 
-// VisitEq implements filters.Visitor.
-func (v *SqlFilter) VisitEq(op filters.Eq) error {
-
-	return comparison(v.buf, op.Field, " = ", op.Value)
-
-}
-
 func comparison(w *strings.Builder, field string, op string, val any) error {
 
 	w.WriteString(field)
+	w.WriteRune(' ')
 	w.WriteString(op)
+	w.WriteRune(' ')
 
 	if valx, err := Parse(val); err == nil {
 		w.WriteString(valx)
@@ -56,16 +112,6 @@ func comparison(w *strings.Builder, field string, op string, val any) error {
 		return err
 	}
 	return nil
-}
-
-// VisitGt implements filters.Visitor.
-func (v *SqlFilter) VisitGt(op filters.Gt) error {
-	return comparison(v.buf, op.Field, " > ", op.Value)
-}
-
-// VisitGte implements filters.Visitor.
-func (v *SqlFilter) VisitGte(op filters.Gte) error {
-	return comparison(v.buf, op.Field, " >= ", op.Value)
 }
 
 // VisitIn implements filters.Visitor.
@@ -91,71 +137,18 @@ func (v *SqlFilter) VisitIn(op filters.In) error {
 
 // VisitLike implements filters.Visitor.
 func (v *SqlFilter) VisitLike(op filters.Like) error {
-	panic("unimplemented")
-}
-
-// VisitLt implements filters.Visitor.
-func (v *SqlFilter) VisitLt(op filters.Lt) error {
-	return comparison(v.buf, op.Field, " > ", op.Value)
-}
-
-// VisitLte implements filters.Visitor.
-func (v *SqlFilter) VisitLte(op filters.Lte) error {
-	return comparison(v.buf, op.Field, " > ", op.Value)
-}
-
-// VisitNq implements filters.Visitor.
-func (v *SqlFilter) VisitNq(op filters.Nq) error {
-	return comparison(v.buf, op.Field, " != ", op.Value)
-}
-
-func (v *SqlFilter) VisitAnd(a filters.And) error {
 	w := v.buf
-	for i := 0; i < len(a.Filters); i++ {
-		w.WriteString("(")
-		f := a.Filters[i]
-		err := f.Accept(v)
-		if err != nil {
-			return err
-		}
-		if i != (len(a.Filters) - 1) {
-			w.WriteString(") AND ")
-		} else {
-			w.WriteString(")")
-		}
 
+	//regular like semantics
+	if op.Method == "" {
+		w.WriteString(op.Field)
+		w.WriteString(" LIKE '")
+		w.WriteString(op.Value)
+		w.WriteRune('\'')
 	}
-	return nil
-}
 
-func (v *SqlFilter) VisitOr(or filters.Or) error {
-	w := v.buf
-	for i := 0; i < len(or.Filters); i++ {
-		w.WriteString("(")
-		f := or.Filters[i]
-		err := f.Accept(v)
-		if err != nil {
-			return err
-		}
-		if i != (len(or.Filters) - 1) {
-			w.WriteString(") OR ")
-		} else {
-			w.WriteString(")")
-		}
-
-	}
 	return nil
-}
 
-func (v *SqlFilter) VisitNot(not filters.Not) error {
-	w := v.buf
-	w.WriteString("NOT (")
-	err := not.Child.Accept(v)
-	if err != nil {
-		return err
-	}
-	w.WriteString(")")
-	return nil
 }
 
 func (v *SqlFilter) String() string {

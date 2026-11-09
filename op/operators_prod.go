@@ -3,6 +3,7 @@
 package op
 
 type Operator int
+type LogicalOperator int
 
 const (
 	Eq Operator = iota
@@ -11,10 +12,13 @@ const (
 	Gte
 	Lt
 	Lte
-	And
-	Or
-	Not
 	Like
 	In
 	Between
+)
+
+const (
+	And LogicalOperator = LogicalOperator(Between) + iota + 1
+	Or
+	Not
 )

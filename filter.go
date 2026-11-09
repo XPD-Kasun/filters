@@ -5,16 +5,9 @@ type Filter interface {
 }
 
 type Visitor interface {
-	VisitAnd(And) error
-	VisitOr(Or) error
-	VisitNot(Not) error
-	VisitEq(Eq) error
-	VisitNq(Nq) error
-	VisitGt(Gt) error
-	VisitGte(Gte) error
-	VisitLt(Lt) error
-	VisitLte(Lte) error
+	VisitLogical(Logical) error
+	VisitComparison(Comparison) error
 	VisitLike(Like) error
-	VisitIn(In) error
 	VisitBetween(Between) error
+	VisitIn(In) error
 }
