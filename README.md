@@ -1,2 +1,9 @@
-# go-filters
-A database agnostic filtering API for your database queries
+# filters
+
+TL;DR: A database agnostic filtering API for your database queries
+
+# Installation
+
+`go get github.com/XPD-Kasun/filters`
+
+
