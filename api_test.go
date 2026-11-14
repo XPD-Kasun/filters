@@ -1,6 +1,8 @@
 package filters_test
 
 import (
+	"log/slog"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -20,12 +22,13 @@ func TestBasic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err.Error())
 	}
-	expected := "((se = 12 and fsd > 2432) or thx = 'success' or fdsi BETWEEN $1 and $2 or fdsi23 BETWEEN $3 and $4)"
+	expected := "((se = $1 and fsd > $2) or thx = $3 or fdsi BETWEEN $4 and $5 or fdsi23 BETWEEN $6 and $7)"
 	if filter.String() != expected {
 		t.Errorf("got %q, want %q", filter.String(), expected)
 	}
-	if len(filter.Args()) != 4 {
-		t.Errorf("expected 4 args, got %d", len(filter.Args()))
+	expectedArgs := []any{12, 2432, "success", 10, 200, 10, 200}
+	if !reflect.DeepEqual(filter.Args(), expectedArgs) {
+		t.Errorf("args mismatch: got %v, want %v", filter.Args(), expectedArgs)
 	}
 }
 
@@ -46,9 +49,13 @@ func TestFn(t *testing.T) {
 	if err := s.Accept(w); err != nil {
 		t.Fatal(err)
 	}
-	expected := "(price >= 200 or df.Stesll = 'fnsdf')"
+	expected := "(price >= $1 or df.Stesll = $2)"
 	if w.String() != expected {
 		t.Errorf("got %q, want %q", w.String(), expected)
+	}
+	expectedArgs := []any{200, "fnsdf"}
+	if !reflect.DeepEqual(w.Args(), expectedArgs) {
+		t.Errorf("args mismatch: got %v, want %v", w.Args(), expectedArgs)
 	}
 }
 
@@ -62,9 +69,13 @@ func TestFn2(t *testing.T) {
 	if err := s.Accept(w); err != nil {
 		t.Fatal(err)
 	}
-	expected := "price >= 200"
+	expected := "price >= $1"
 	if w.String() != expected {
 		t.Errorf("got %q, want %q", w.String(), expected)
+	}
+	expectedArgs := []any{200}
+	if !reflect.DeepEqual(w.Args(), expectedArgs) {
+		t.Errorf("args mismatch: got %v, want %v", w.Args(), expectedArgs)
 	}
 }
 
@@ -74,9 +85,40 @@ func TestNotFilter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := "NOT(status = 'deleted')"
+	expected := "NOT(status = $1)"
 	if sf.String() != expected {
 		t.Errorf("got %q, want %q", sf.String(), expected)
+	}
+	if len(sf.Args()) != 1 || sf.Args()[0] != "deleted" {
+		t.Errorf("args mismatch: got %v", sf.Args())
+	}
+}
+
+func TestNilComparison(t *testing.T) {
+	// Eq nil -> IS NULL
+	filterEq := f.Eq("deleted_at", nil)
+	sfEq, err := sqlfilter.New(sqlfilter.PostgresConfig, filterEq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sfEq.String() != "deleted_at IS NULL" {
+		t.Errorf("got %q, want deleted_at IS NULL", sfEq.String())
+	}
+	if len(sfEq.Args()) != 0 {
+		t.Errorf("expected 0 args for IS NULL, got %d", len(sfEq.Args()))
+	}
+
+	// Nq nil -> IS NOT NULL
+	filterNq := f.Nq("deleted_at", nil)
+	sfNq, err := sqlfilter.New(sqlfilter.PostgresConfig, filterNq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sfNq.String() != "deleted_at IS NOT NULL" {
+		t.Errorf("got %q, want deleted_at IS NOT NULL", sfNq.String())
+	}
+	if len(sfNq.Args()) != 0 {
+		t.Errorf("expected 0 args for IS NOT NULL, got %d", len(sfNq.Args()))
 	}
 }
 
@@ -87,6 +129,7 @@ func TestRegexDialects(t *testing.T) {
 		expected string
 	}{
 		{"Postgres", sqlfilter.PostgresConfig, "username ~ $1"},
+		{"CockroachDB", sqlfilter.CockroachDBConfig, "username ~ $1"},
 		{"MySQL", sqlfilter.MySqlConfig, "username REGEXP ?"},
 		{"ClickHouse", sqlfilter.ClickHouseConfig, "match(username, ?)"},
 		{"Oracle", sqlfilter.OracleConfig, "REGEXP_LIKE(username, :1)"},
@@ -117,68 +160,58 @@ func TestIdentifierQuoting(t *testing.T) {
 		f.In("group.status", "active", "pending"),
 	)
 
-	// Postgres quotes with "
+	// Postgres quotes with " and uses $1, $2, $3
 	pgCfg := sqlfilter.PostgresConfig.WithQuoting(true)
 	sfPg, err := sqlfilter.New(pgCfg, filter)
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectedPg := `("users"."order" = 100 and "group"."status" IN ('active','pending'))`
+	expectedPg := `("users"."order" = $1 and "group"."status" IN ($2,$3))`
 	if sfPg.String() != expectedPg {
 		t.Errorf("Postgres quoting: got %q, want %q", sfPg.String(), expectedPg)
 	}
+	expectedPgArgs := []any{100, "active", "pending"}
+	if !reflect.DeepEqual(sfPg.Args(), expectedPgArgs) {
+		t.Errorf("Postgres args mismatch: got %v, want %v", sfPg.Args(), expectedPgArgs)
+	}
 
-	// MySQL quotes with `
+	// MySQL quotes with ` and uses ?
 	myCfg := sqlfilter.MySqlConfig.WithQuoting(true)
 	sfMy, err := sqlfilter.New(myCfg, filter)
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectedMy := "(`users`.`order` = 100 and `group`.`status` IN ('active','pending'))"
+	expectedMy := "(`users`.`order` = ? and `group`.`status` IN (?,?))"
 	if sfMy.String() != expectedMy {
 		t.Errorf("MySQL quoting: got %q, want %q", sfMy.String(), expectedMy)
 	}
 
-	// SQL Server quotes with [ ]
+	// SQL Server quotes with [ ] and uses @p1, @p2, @p3
 	msCfg := sqlfilter.MsSqlServerConfig.WithQuoting(true)
 	sfMs, err := sqlfilter.New(msCfg, filter)
 	if err != nil {
 		t.Fatal(err)
 	}
-	expectedMs := "([users].[order] = 100 and [group].[status] IN ('active','pending'))"
+	expectedMs := "([users].[order] = @p1 and [group].[status] IN (@p2,@p3))"
 	if sfMs.String() != expectedMs {
 		t.Errorf("SQL Server quoting: got %q, want %q", sfMs.String(), expectedMs)
 	}
 }
 
 func TestNumericBooleans(t *testing.T) {
-	filter := f.Eq("is_active", true)
-
-	// Postgres uses TRUE
-	sfPg, err := sqlfilter.New(sqlfilter.PostgresConfig, filter)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sfPg.String() != "is_active = TRUE" {
-		t.Errorf("Postgres bool: got %q, want is_active = TRUE", sfPg.String())
+	valPg, err := sqlfilter.ParseWithConfig(sqlfilter.PostgresConfig, true)
+	if err != nil || valPg != "TRUE" {
+		t.Errorf("Postgres bool: got %q, want TRUE", valPg)
 	}
 
-	// SQL Server uses 1/0
-	sfMs, err := sqlfilter.New(sqlfilter.MsSqlServerConfig, filter)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sfMs.String() != "is_active = 1" {
-		t.Errorf("SQL Server bool: got %q, want is_active = 1", sfMs.String())
+	valMs, err := sqlfilter.ParseWithConfig(sqlfilter.MsSqlServerConfig, true)
+	if err != nil || valMs != "1" {
+		t.Errorf("SQL Server bool: got %q, want 1", valMs)
 	}
 
-	// Oracle uses 1/0
-	sfOra, err := sqlfilter.New(sqlfilter.OracleConfig, filter)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sfOra.String() != "is_active = 1" {
-		t.Errorf("Oracle bool: got %q, want is_active = 1", sfOra.String())
+	valOra, err := sqlfilter.ParseWithConfig(sqlfilter.OracleConfig, true)
+	if err != nil || valOra != "1" {
+		t.Errorf("Oracle bool: got %q, want 1", valOra)
 	}
 }
 
@@ -217,5 +250,31 @@ func TestEmptyInFilter(t *testing.T) {
 	_, err := sqlfilter.New(sqlfilter.PostgresConfig, filter)
 	if err == nil {
 		t.Fatal("expected error for empty IN filter, got nil")
+	}
+}
+
+func TestSqlFilterLogging(t *testing.T) {
+	var buf strings.Builder
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+	}))
+
+	cfg := sqlfilter.PostgresConfig.WithLogger(logger)
+	filter := f.And(
+		f.Eq("status", "active"),
+		f.Between("age", 18, 65),
+	)
+
+	_, err := sqlfilter.New(cfg, filter)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	logOutput := buf.String()
+	if !strings.Contains(logOutput, "level=INFO") || !strings.Contains(logOutput, "compiling filter to SQL") {
+		t.Errorf("expected INFO log in output, got: %s", logOutput)
+	}
+	if !strings.Contains(logOutput, "level=DEBUG") || !strings.Contains(logOutput, "visiting comparison") {
+		t.Errorf("expected DEBUG log in output, got: %s", logOutput)
 	}
 }

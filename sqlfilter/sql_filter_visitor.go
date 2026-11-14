@@ -13,7 +13,7 @@ type SqlFilter struct {
 	sqlConfig    SqlConfig
 	sqlParamChar rune
 	buf          *strings.Builder
-	args         []string
+	args         []any
 	paramOrder   int
 	usesCaching  bool
 	cmdCache     map[filters.Filter]string
@@ -54,12 +54,42 @@ var opMap = map[op.Operator]string{
 
 // VisitComparison implements [filters.Visitor].
 func (v *SqlFilter) VisitComparison(op filters.CompareFilter) error {
-	return comparison(v.buf, v.sqlConfig, op.Field, opMap[op.Op], op.Value)
+	if op.Value == nil {
+		return v.compareNull(op.Field, op.Op)
+	}
+	return v.comparison(op.Field, opMap[op.Op], op.Value)
+}
+
+func (v *SqlFilter) compareNull(field string, operator op.Operator) error {
+	w := v.buf
+	var nullstr string
+
+	switch operator {
+	case op.Eq:
+		nullstr = " IS NULL"
+	case op.Nq:
+		nullstr = " IS NOT NULL"
+	default:
+		return fmt.Errorf("SqlFilter: operator %v is not compatible with nil", operator)
+	}
+
+	quoted := QuoteIdentifier(v.Config(), field)
+	if v.sqlConfig.Logger != nil {
+		v.sqlConfig.Logger.Debug("sqlfilter: visiting null comparison", "field", quoted, "operator", nullstr)
+	}
+
+	w.WriteString(quoted)
+	w.WriteString(nullstr)
+	return nil
 }
 
 // VisitLogical implements [filters.Visitor].
 func (v *SqlFilter) VisitLogical(l filters.LogicalFilter) error {
 	w := v.buf
+
+	if v.sqlConfig.Logger != nil {
+		v.sqlConfig.Logger.Debug("sqlfilter: visiting logical filter", "operator", opLogicalMap[l.Op], "childrenCount", len(l.Children))
+	}
 
 	switch l.Op {
 	case op.And, op.Or:
@@ -94,7 +124,13 @@ func (v *SqlFilter) VisitLogical(l filters.LogicalFilter) error {
 // VisitBetween implements filters.Visitor.
 func (v *SqlFilter) VisitBetween(a filters.BetweenFilter) error {
 	w := v.buf
-	w.WriteString(QuoteIdentifier(v.sqlConfig, a.Field))
+	quotedField := QuoteIdentifier(v.sqlConfig, a.Field)
+
+	if v.sqlConfig.Logger != nil {
+		v.sqlConfig.Logger.Debug("sqlfilter: visiting between filter", "field", quotedField, "from", a.From, "to", a.To)
+	}
+
+	w.WriteString(quotedField)
 	w.WriteString(" BETWEEN ")
 	v.paramOrder++
 	w.WriteString(FormatPlaceholder(v.sqlConfig, v.paramOrder))
@@ -102,36 +138,30 @@ func (v *SqlFilter) VisitBetween(a filters.BetweenFilter) error {
 	v.paramOrder++
 	w.WriteString(FormatPlaceholder(v.sqlConfig, v.paramOrder))
 
-	if arg1, err := ParseWithConfig(v.sqlConfig, a.From); err == nil {
-		v.args = append(v.args, arg1)
-	} else {
-		return err
-	}
-
-	if arg2, err := ParseWithConfig(v.sqlConfig, a.To); err == nil {
-		v.args = append(v.args, arg2)
-	} else {
-		return err
-	}
-
+	v.args = append(v.args, a.From, a.To)
 	return nil
 }
 
-func comparison(w *strings.Builder, cfg SqlConfig, field string, op string, val any) error {
-	w.WriteString(QuoteIdentifier(cfg, field))
+func (v *SqlFilter) comparison(field string, operator string, val any) error {
+	w := v.buf
+	quotedField := QuoteIdentifier(v.sqlConfig, field)
+
+	if v.sqlConfig.Logger != nil {
+		v.sqlConfig.Logger.Debug("sqlfilter: visiting comparison", "field", quotedField, "operator", operator, "value", val)
+	}
+
+	w.WriteString(quotedField)
 	w.WriteRune(' ')
-	w.WriteString(op)
+	w.WriteString(operator)
 	w.WriteRune(' ')
 
-	if valx, err := ParseWithConfig(cfg, val); err == nil {
-		w.WriteString(valx)
-	} else {
-		return err
-	}
+	v.paramOrder++
+	w.WriteString(FormatPlaceholder(v.sqlConfig, v.paramOrder))
+	v.args = append(v.args, val)
 	return nil
 }
 
-func (v *SqlFilter) Args() []string {
+func (v *SqlFilter) Args() []any {
 	return v.args
 }
 
@@ -141,23 +171,25 @@ func (v *SqlFilter) Config() SqlConfig {
 
 // VisitIn implements filters.Visitor.
 func (v *SqlFilter) VisitIn(op filters.InFilter) error {
-	w := v.buf
-
-	var s []string = make([]string, 0, len(op.Values))
-
-	for _, val := range op.Values {
-		if valParsed, err := ParseWithConfig(v.sqlConfig, val); err == nil {
-			s = append(s, valParsed)
-		} else {
-			return err
-		}
-	}
-
-	if len(s) == 0 {
+	if len(op.Values) == 0 {
 		return errors.New("sqlfilter: IN clause cannot have empty values")
 	}
 
-	w.WriteString(QuoteIdentifier(v.sqlConfig, op.Field))
+	w := v.buf
+	quotedField := QuoteIdentifier(v.sqlConfig, op.Field)
+
+	if v.sqlConfig.Logger != nil {
+		v.sqlConfig.Logger.Debug("sqlfilter: visiting in filter", "field", quotedField, "valuesCount", len(op.Values))
+	}
+
+	s := make([]string, len(op.Values))
+	for i, val := range op.Values {
+		v.paramOrder++
+		s[i] = FormatPlaceholder(v.sqlConfig, v.paramOrder)
+		v.args = append(v.args, val)
+	}
+
+	w.WriteString(quotedField)
 	w.WriteString(" IN (")
 	w.WriteString(strings.Join(s, ","))
 	w.WriteString(")")
@@ -174,6 +206,11 @@ func (v *SqlFilter) VisitLike(op filters.LikeFilter) error {
 	if op.Method == "" {
 		v.paramOrder++
 		placeholder := FormatPlaceholder(v.sqlConfig, v.paramOrder)
+
+		if v.sqlConfig.Logger != nil {
+			v.sqlConfig.Logger.Debug("sqlfilter: visiting like filter", "field", quotedField, "pattern", op.Value, "placeholder", placeholder)
+		}
+
 		w.WriteString(quotedField)
 		w.WriteString(" LIKE ")
 		w.WriteString(placeholder)
@@ -186,6 +223,11 @@ func (v *SqlFilter) VisitLike(op filters.LikeFilter) error {
 	if op.Method == "regex" {
 		v.paramOrder++
 		placeholder := FormatPlaceholder(v.sqlConfig, v.paramOrder)
+
+		if v.sqlConfig.Logger != nil {
+			v.sqlConfig.Logger.Debug("sqlfilter: visiting regex filter", "field", quotedField, "pattern", op.Value, "placeholder", placeholder)
+		}
+
 		w.WriteString(FormatRegex(v.sqlConfig.Name, quotedField, placeholder))
 		v.args = append(v.args, op.Value)
 		return nil
@@ -211,15 +253,26 @@ func NewEmpty(sqlConfig SqlConfig) *SqlFilter {
 }
 
 func New(sqlConfig SqlConfig, f filters.Filter) (*SqlFilter, error) {
-
 	sf := NewEmpty(sqlConfig)
+
+	if sf.sqlConfig.Logger != nil {
+		sf.sqlConfig.Logger.Info("sqlfilter: compiling filter to SQL", "variant", sf.sqlConfig.Name)
+	}
 
 	if mf, ok := f.(filters.MetaFilter); ok {
 		sf.meta = mf.GetAll()
 	}
 
 	if err := f.Accept(sf); err != nil {
+		if sf.sqlConfig.Logger != nil {
+			sf.sqlConfig.Logger.Error("sqlfilter: compilation failed", "error", err)
+		}
 		return nil, err
 	}
+
+	if sf.sqlConfig.Logger != nil {
+		sf.sqlConfig.Logger.Info("sqlfilter: compilation succeeded", "sql", sf.String(), "argsCount", len(sf.args))
+	}
+
 	return sf, nil
 }

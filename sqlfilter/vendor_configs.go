@@ -1,5 +1,7 @@
 package sqlfilter
 
+import "log/slog"
+
 type SqlConfig struct {
 	Name             SqlVariant
 	SqlParamChar     rune
@@ -7,10 +9,19 @@ type SqlConfig struct {
 	QuoteOpen        rune
 	QuoteClose       rune
 	NumericBooleans  bool
+	Logger           *slog.Logger
 }
 
 var PostgresConfig = SqlConfig{
 	Name:             Postgres,
+	SqlParamChar:     '$',
+	QuoteOpen:        '"',
+	QuoteClose:       '"',
+	QuoteIdentifiers: false,
+}
+
+var CockroachDBConfig = SqlConfig{
+	Name:             CockroachDB,
 	SqlParamChar:     '$',
 	QuoteOpen:        '"',
 	QuoteClose:       '"',
@@ -62,5 +73,11 @@ var OracleConfig = SqlConfig{
 // WithQuoting returns a copy of the SqlConfig with QuoteIdentifiers set to enabled.
 func (c SqlConfig) WithQuoting(enabled bool) SqlConfig {
 	c.QuoteIdentifiers = enabled
+	return c
+}
+
+// WithLogger returns a copy of the SqlConfig with the specified structured logger attached.
+func (c SqlConfig) WithLogger(logger *slog.Logger) SqlConfig {
+	c.Logger = logger
 	return c
 }

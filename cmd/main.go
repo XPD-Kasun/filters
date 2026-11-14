@@ -1,20 +1,40 @@
 package main
 
 import (
-	"fmt"
+	"log/slog"
 	"os"
+	"strings"
 )
 
 var Version = "1.0.0"
 
 func main() {
-
 	args := os.Args[1:]
-	fmt.Printf("%+v\n", args)
+
+	// configure slog with configurable log level
+	level := slog.LevelInfo
+	for _, arg := range args {
+		if arg == "-debug" || arg == "--debug" || arg == "-v" {
+			level = slog.LevelDebug
+			break
+		}
+	}
+	if os.Getenv("DEBUG") != "" {
+		level = slog.LevelDebug
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: level,
+	}))
+	slog.SetDefault(logger)
+
+	slog.Info("starting go-filters generator", "version", Version)
+	slog.Debug("command line arguments", "args", args)
+
 	gofile := os.Getenv("GOFILE")
 	goline := os.Getenv("GOLINE")
 	gopkg := os.Getenv("GOPACKAGE")
-	fmt.Println(gofile, goline, gopkg)
+	slog.Debug("environment variables", "GOFILE", gofile, "GOLINE", goline, "GOPACKAGE", gopkg)
 
 	ctx := &GenCtx{
 		line: goline,
@@ -22,17 +42,22 @@ func main() {
 		pkg:  gopkg,
 	}
 
-	targetFileName := args[0]
+	var targetFileName string
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		targetFileName = arg
+		break
+	}
 	if targetFileName == "" {
 		targetFileName = gofile + "_query.go"
 	}
+
+	slog.Info("generating filter queries", "targetFile", targetFileName)
 	gen := NewGenerator(ctx)
 
 	gen.Generate()
-	fmt.Println(gen.GetCode())
+	slog.Debug("generated code preview", "codeLength", len(gen.GetCode()))
 	gen.Sync(targetFileName)
-
-	// fs := token.NewFileSet()
-	// parser.Mode
-
 }
