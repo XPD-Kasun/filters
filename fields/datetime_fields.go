@@ -13,3 +13,12 @@ type DateTimeField[U any] struct {
 func (iF DateTimeField[U]) Between(val1, val2 time.Time) filters.Filter {
 	return filters.Between(iF.getAliasName(), val1, val2)
 }
+
+func NewDateTimeField[T comparable](name, alias string) DateTimeField[T] {
+	return DateTimeField[T]{
+		ComparebleField[T, time.Time]{
+			Name:  name,
+			Alias: alias,
+		},
+	}
+}

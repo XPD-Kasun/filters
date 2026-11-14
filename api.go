@@ -54,8 +54,12 @@ func Not(expr Filter) Filter {
 	return f
 }
 
-func Like(field string, value string, method string) Filter {
-	f := LikeFilter{Field: field, Value: value, Method: method}
+func Like(field string, value string, method ...string) Filter {
+	var m string = ""
+	if len(method) > 0 {
+		m = method[0]
+	}
+	f := LikeFilter{Field: field, Value: value, Method: m}
 	return f
 }
 

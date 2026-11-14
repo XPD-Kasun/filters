@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-var Version = "1.0.0"
+var Version = "0.1.0"
 
 func main() {
 	args := os.Args[1:]

@@ -208,7 +208,7 @@ func (g *Generator) writePackage() {
 	v.WriteString("\npackage ")
 	v.WriteString(g.ctx.pkg)
 	v.WriteString("\n\n")
-	v.WriteString("import(\n\tf \"github.com/XPD-Kasun/filters\"\n)\n\n")
+	v.WriteString("import(\n\t\"github.com/XPD-Kasun/filters/fields\"\n)\n\n")
 }
 
 func (g *Generator) writeQueryStub() {
@@ -224,10 +224,10 @@ func (g *Generator) writeQueryStub() {
 			v.WriteString(field.Name)
 			v.WriteRune(' ')
 			if field.Type[0] == '*' {
-				v.WriteString("f.")
+				v.WriteString("fields.")
 				v.WriteString(validTypes[field.Type[1:]])
 			} else {
-				v.WriteString("f.")
+				v.WriteString("fields.")
 				v.WriteString(validTypes[field.Type])
 			}
 			v.WriteRune('[')
@@ -237,16 +237,31 @@ func (g *Generator) writeQueryStub() {
 		}
 
 		v.WriteString("}\n\n")
-		v.WriteString("var ")
-		v.WriteString(Camel(structName))
-		v.WriteString("Filter")
-		v.WriteString(" *")
-		v.WriteString(structName)
-		v.WriteString("Filter")
-		v.WriteString(" = &")
-		v.WriteString(structName)
-		v.WriteString("Filter")
-		v.WriteString("{}\n\n")
+
+		v.WriteString("func New")
+		v.WriteString(Pascal(structName))
+		v.WriteString("Filter() *")
+		v.WriteString(Pascal(structName))
+		v.WriteString("Filter{\n")
+		v.WriteString("\treturn &")
+		v.WriteString(Pascal(structName))
+		v.WriteString("Filter{\n")
+		for _, field := range fields {
+			v.WriteString("\t\t")
+			v.WriteString(field.Name)
+			v.WriteString(": ")
+			if field.Type[0] == '*' {
+				v.WriteString("fields.New")
+				v.WriteString(validTypes[field.Type[1:]])
+				v.WriteString(fmt.Sprintf(`[%s]("%s","%s"),%c`, structName, field.Name, Pascal(structName), '\n'))
+			} else {
+				v.WriteString("fields.New")
+				v.WriteString(validTypes[field.Type])
+				v.WriteString(fmt.Sprintf(`[%s]("%s","%s"),%c`, structName, field.Name, Pascal(structName), '\n'))
+			}
+		}
+		v.WriteString("\t}\n")
+		v.WriteString("}\n")
 	}
 }
 
