@@ -25,6 +25,22 @@ var MySqlConfig = SqlConfig{
 	QuoteIdentifiers: false,
 }
 
+var ClickHouseConfig = SqlConfig{
+	Name:             ClickHouse,
+	SqlParamChar:     '?',
+	QuoteOpen:        '`',
+	QuoteClose:       '`',
+	QuoteIdentifiers: false,
+}
+
+var SQLiteConfig = SqlConfig{
+	Name:             SQLite,
+	SqlParamChar:     '?',
+	QuoteOpen:        '"',
+	QuoteClose:       '"',
+	QuoteIdentifiers: false,
+}
+
 var MsSqlServerConfig = SqlConfig{
 	Name:             MsSqlServer,
 	SqlParamChar:     '@',

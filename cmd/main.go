@@ -5,6 +5,8 @@ import (
 	"os"
 )
 
+var Version = "1.0.0"
+
 func main() {
 
 	args := os.Args[1:]

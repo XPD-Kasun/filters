@@ -187,7 +187,6 @@ func (v *SqlFilter) VisitLike(op filters.LikeFilter) error {
 		v.paramOrder++
 		placeholder := FormatPlaceholder(v.sqlConfig, v.paramOrder)
 		w.WriteString(FormatRegex(v.sqlConfig.Name, quotedField, placeholder))
-
 		v.args = append(v.args, op.Value)
 		return nil
 	}
@@ -212,6 +211,7 @@ func NewEmpty(sqlConfig SqlConfig) *SqlFilter {
 }
 
 func New(sqlConfig SqlConfig, f filters.Filter) (*SqlFilter, error) {
+
 	sf := NewEmpty(sqlConfig)
 
 	if mf, ok := f.(filters.MetaFilter); ok {

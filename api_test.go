@@ -88,8 +88,10 @@ func TestRegexDialects(t *testing.T) {
 	}{
 		{"Postgres", sqlfilter.PostgresConfig, "username ~ $1"},
 		{"MySQL", sqlfilter.MySqlConfig, "username REGEXP ?"},
+		{"ClickHouse", sqlfilter.ClickHouseConfig, "match(username, ?)"},
 		{"Oracle", sqlfilter.OracleConfig, "REGEXP_LIKE(username, :1)"},
 		{"MsSqlServer", sqlfilter.MsSqlServerConfig, "username LIKE @p1"},
+		{"SQLite", sqlfilter.SQLiteConfig, "username REGEXP ?"},
 	}
 
 	for _, tt := range tests {
@@ -115,7 +117,7 @@ func TestIdentifierQuoting(t *testing.T) {
 		f.In("group.status", "active", "pending"),
 	)
 
-	// Postgres
+	// Postgres quotes with "
 	pgCfg := sqlfilter.PostgresConfig.WithQuoting(true)
 	sfPg, err := sqlfilter.New(pgCfg, filter)
 	if err != nil {
@@ -126,7 +128,7 @@ func TestIdentifierQuoting(t *testing.T) {
 		t.Errorf("Postgres quoting: got %q, want %q", sfPg.String(), expectedPg)
 	}
 
-	// MySQL
+	// MySQL quotes with `
 	myCfg := sqlfilter.MySqlConfig.WithQuoting(true)
 	sfMy, err := sqlfilter.New(myCfg, filter)
 	if err != nil {
@@ -137,7 +139,7 @@ func TestIdentifierQuoting(t *testing.T) {
 		t.Errorf("MySQL quoting: got %q, want %q", sfMy.String(), expectedMy)
 	}
 
-	// SQL Server
+	// SQL Server quotes with [ ]
 	msCfg := sqlfilter.MsSqlServerConfig.WithQuoting(true)
 	sfMs, err := sqlfilter.New(msCfg, filter)
 	if err != nil {
