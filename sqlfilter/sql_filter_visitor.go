@@ -10,12 +10,29 @@ import (
 )
 
 type SqlFilter struct {
-	buf         *strings.Builder
-	args        []string
-	paramOrder  int
-	usesCaching bool
-	cmdCache    map[filters.Filter]string
+	sqlConfig    SqlConfig
+	sqlParamChar rune
+	buf          *strings.Builder
+	args         []string
+	paramOrder   int
+	usesCaching  bool
+	cmdCache     map[filters.Filter]string
+	meta         map[string]string
 }
+
+var _ filters.Visitor = &SqlFilter{}
+
+type SqlVariant string
+
+const (
+	Postgres    SqlVariant = "Postgres"
+	CockroachDB SqlVariant = "CockroachDB"
+	Oracle      SqlVariant = "Oracle"
+	MsSqlServer SqlVariant = "MsSqlServer"
+	MySql       SqlVariant = "MySql"
+	SQLite      SqlVariant = "SQLite"
+	ClickHouse  SqlVariant = "ClickHouse"
+)
 
 var opLogicalMap = map[op.LogicalOperator]string{
 	op.And: "and",
@@ -36,12 +53,12 @@ var opMap = map[op.Operator]string{
 }
 
 // VisitComparison implements [filters.Visitor].
-func (v *SqlFilter) VisitComparison(op filters.Comparison) error {
-	return comparison(v.buf, op.Field, opMap[op.Op], op.Value)
+func (v *SqlFilter) VisitComparison(op filters.CompareFilter) error {
+	return comparison(v.buf, v.sqlConfig, op.Field, opMap[op.Op], op.Value)
 }
 
 // VisitLogical implements [filters.Visitor].
-func (v *SqlFilter) VisitLogical(l filters.Logical) error {
+func (v *SqlFilter) VisitLogical(l filters.LogicalFilter) error {
 	w := v.buf
 
 	switch l.Op {
@@ -72,25 +89,26 @@ func (v *SqlFilter) VisitLogical(l filters.Logical) error {
 	}
 
 	return nil
-
 }
 
-var _ filters.Visitor = &SqlFilter{}
-
 // VisitBetween implements filters.Visitor.
-func (v *SqlFilter) VisitBetween(a filters.Between) error {
+func (v *SqlFilter) VisitBetween(a filters.BetweenFilter) error {
 	w := v.buf
-	w.WriteString(a.Field)
-	w.WriteString(fmt.Sprintf(" BETWEEN $%d and $%d", v.paramOrder+1, v.paramOrder+2))
-	v.paramOrder += 2
+	w.WriteString(QuoteIdentifier(v.sqlConfig, a.Field))
+	w.WriteString(" BETWEEN ")
+	v.paramOrder++
+	w.WriteString(FormatPlaceholder(v.sqlConfig, v.paramOrder))
+	w.WriteString(" and ")
+	v.paramOrder++
+	w.WriteString(FormatPlaceholder(v.sqlConfig, v.paramOrder))
 
-	if arg1, err := Parse(a.From); err == nil {
+	if arg1, err := ParseWithConfig(v.sqlConfig, a.From); err == nil {
 		v.args = append(v.args, arg1)
 	} else {
 		return err
 	}
 
-	if arg2, err := Parse(a.To); err == nil {
+	if arg2, err := ParseWithConfig(v.sqlConfig, a.To); err == nil {
 		v.args = append(v.args, arg2)
 	} else {
 		return err
@@ -99,14 +117,13 @@ func (v *SqlFilter) VisitBetween(a filters.Between) error {
 	return nil
 }
 
-func comparison(w *strings.Builder, field string, op string, val any) error {
-
-	w.WriteString(field)
+func comparison(w *strings.Builder, cfg SqlConfig, field string, op string, val any) error {
+	w.WriteString(QuoteIdentifier(cfg, field))
 	w.WriteRune(' ')
 	w.WriteString(op)
 	w.WriteRune(' ')
 
-	if valx, err := Parse(val); err == nil {
+	if valx, err := ParseWithConfig(cfg, val); err == nil {
 		w.WriteString(valx)
 	} else {
 		return err
@@ -114,21 +131,34 @@ func comparison(w *strings.Builder, field string, op string, val any) error {
 	return nil
 }
 
+func (v *SqlFilter) Args() []string {
+	return v.args
+}
+
+func (v *SqlFilter) Config() SqlConfig {
+	return v.sqlConfig
+}
+
 // VisitIn implements filters.Visitor.
-func (v *SqlFilter) VisitIn(op filters.In) error {
+func (v *SqlFilter) VisitIn(op filters.InFilter) error {
 	w := v.buf
 
-	w.WriteString(op.Field)
-	w.WriteString(" IN (")
+	var s []string = make([]string, 0, len(op.Values))
 
-	var s []string = make([]string, len(op.Values))
-
-	for i, val := range op.Values {
-		if v, err := Parse(val); err == nil {
-			s[i] = v
+	for _, val := range op.Values {
+		if valParsed, err := ParseWithConfig(v.sqlConfig, val); err == nil {
+			s = append(s, valParsed)
+		} else {
+			return err
 		}
 	}
 
+	if len(s) == 0 {
+		return errors.New("sqlfilter: IN clause cannot have empty values")
+	}
+
+	w.WriteString(QuoteIdentifier(v.sqlConfig, op.Field))
+	w.WriteString(" IN (")
 	w.WriteString(strings.Join(s, ","))
 	w.WriteString(")")
 
@@ -136,37 +166,58 @@ func (v *SqlFilter) VisitIn(op filters.In) error {
 }
 
 // VisitLike implements filters.Visitor.
-func (v *SqlFilter) VisitLike(op filters.Like) error {
+func (v *SqlFilter) VisitLike(op filters.LikeFilter) error {
 	w := v.buf
+	quotedField := QuoteIdentifier(v.sqlConfig, op.Field)
 
-	//regular like semantics
+	// regular like semantics
 	if op.Method == "" {
-		w.WriteString(op.Field)
-		w.WriteString(" LIKE '")
-		w.WriteString(op.Value)
-		w.WriteRune('\'')
+		v.paramOrder++
+		placeholder := FormatPlaceholder(v.sqlConfig, v.paramOrder)
+		w.WriteString(quotedField)
+		w.WriteString(" LIKE ")
+		w.WriteString(placeholder)
+
+		v.args = append(v.args, op.Value)
+		return nil
 	}
 
-	return nil
+	// regex support in sql
+	if op.Method == "regex" {
+		v.paramOrder++
+		placeholder := FormatPlaceholder(v.sqlConfig, v.paramOrder)
+		w.WriteString(FormatRegex(v.sqlConfig.Name, quotedField, placeholder))
 
+		v.args = append(v.args, op.Value)
+		return nil
+	}
+
+	return fmt.Errorf("sqlfilter: unsupported LIKE method %q", op.Method)
 }
 
 func (v *SqlFilter) String() string {
 	return v.buf.String()
 }
 
-func NewEmpty() *SqlFilter {
+func NewEmpty(sqlConfig SqlConfig) *SqlFilter {
+	if sqlConfig.Name == "" && sqlConfig.SqlParamChar == 0 {
+		sqlConfig = PostgresConfig
+	}
 	return &SqlFilter{
-		cmdCache: map[filters.Filter]string{},
-		buf:      &strings.Builder{},
+		cmdCache:     map[filters.Filter]string{},
+		buf:          &strings.Builder{},
+		sqlConfig:    sqlConfig,
+		sqlParamChar: sqlConfig.SqlParamChar,
 	}
 }
 
-func New(f filters.Filter) (*SqlFilter, error) {
-	sf := &SqlFilter{
-		cmdCache: map[filters.Filter]string{},
-		buf:      &strings.Builder{},
+func New(sqlConfig SqlConfig, f filters.Filter) (*SqlFilter, error) {
+	sf := NewEmpty(sqlConfig)
+
+	if mf, ok := f.(filters.MetaFilter); ok {
+		sf.meta = mf.GetAll()
 	}
+
 	if err := f.Accept(sf); err != nil {
 		return nil, err
 	}

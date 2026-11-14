@@ -1,51 +1,78 @@
 package filters
 
-import "github.com/XPD-Kasun/filters/op"
+import (
+	"maps"
 
-type Like struct {
+	"github.com/XPD-Kasun/filters/op"
+)
+
+type LikeFilter struct {
 	Field  string
 	Value  string
 	Method string
 }
 
-func (op Like) Accept(v Visitor) error {
+func (op LikeFilter) Accept(v Visitor) error {
 	return v.VisitLike(op)
 }
 
-type In struct {
+type InFilter struct {
 	Field  string
 	Values []any
 }
 
-func (op In) Accept(v Visitor) error {
+func (op InFilter) Accept(v Visitor) error {
 	return v.VisitIn(op)
 }
 
-type Between struct {
+type BetweenFilter struct {
 	Field string
 	From  any
 	To    any
 }
 
-func (op Between) Accept(v Visitor) error {
+func (op BetweenFilter) Accept(v Visitor) error {
 	return v.VisitBetween(op)
 }
 
-type Logical struct {
+type LogicalFilter struct {
 	Op       op.LogicalOperator
 	Children []Filter
 }
 
-func (l Logical) Accept(v Visitor) error {
+func (l LogicalFilter) Accept(v Visitor) error {
 	return v.VisitLogical(l)
 }
 
-type Comparison struct {
+type CompareFilter struct {
 	Op    op.Operator
 	Field string
 	Value any
 }
 
-func (c Comparison) Accept(v Visitor) error {
+func (c CompareFilter) Accept(v Visitor) error {
 	return v.VisitComparison(c)
+}
+
+type MetaFilterImpl struct {
+	meta   map[string]string
+	filter Filter
+}
+
+var _ MetaFilter = &MetaFilterImpl{}
+
+func (m *MetaFilterImpl) Accept(v Visitor) error {
+	return m.filter.Accept(v)
+}
+
+func (m *MetaFilterImpl) Get(key string) string {
+	return m.meta[key]
+}
+
+func (m *MetaFilterImpl) GetAll() map[string]string {
+	return maps.Clone(m.meta)
+}
+
+func (m *MetaFilterImpl) Set(key, value string) {
+	m.meta[key] = value
 }

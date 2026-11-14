@@ -2,65 +2,72 @@ package filters
 
 import "github.com/XPD-Kasun/filters/op"
 
-func EQ(field string, value any) Filter {
-	f := Comparison{Op: op.Eq, Field: field, Value: value}
+func Eq(field string, value any) Filter {
+	f := CompareFilter{Op: op.Eq, Field: field, Value: value}
 	return f
 }
 
-func NQ(field string, value any) Filter {
-	f := Comparison{Op: op.Nq, Field: field, Value: value}
+func Nq(field string, value any) Filter {
+	f := CompareFilter{Op: op.Nq, Field: field, Value: value}
 	return f
 }
 
-func GT(field string, value any) Filter {
-	f := Comparison{Op: op.Gt, Field: field, Value: value}
+func Gt(field string, value any) Filter {
+	f := CompareFilter{Op: op.Gt, Field: field, Value: value}
 	return f
 }
 
-func GTE(field string, value any) Filter {
-	f := Comparison{Op: op.Gte, Field: field, Value: value}
+func Gte(field string, value any) Filter {
+	f := CompareFilter{Op: op.Gte, Field: field, Value: value}
 	return f
 }
 
-func LT(field string, value any) Filter {
-	f := Comparison{Op: op.Lt, Field: field, Value: value}
+func Lt(field string, value any) Filter {
+	f := CompareFilter{Op: op.Lt, Field: field, Value: value}
 	return f
 }
 
-func LTE(field string, value any) Filter {
-	f := Comparison{Op: op.Lte, Field: field, Value: value}
+func WithMeta(meta map[string]string, filter Filter) MetaFilter {
+	return &MetaFilterImpl{
+		meta:   meta,
+		filter: filter,
+	}
+}
+
+func Lte(field string, value any) Filter {
+	f := CompareFilter{Op: op.Lte, Field: field, Value: value}
 	return f
 }
 
-func AND(filters ...Filter) Filter {
-	f := Logical{Op: op.And, Children: filters}
+func And(filters ...Filter) Filter {
+	f := LogicalFilter{Op: op.And, Children: filters}
 	return f
 }
 
-func OR(filters ...Filter) Filter {
-	f := Logical{Op: op.Or, Children: filters}
+func Or(filters ...Filter) Filter {
+	f := LogicalFilter{Op: op.Or, Children: filters}
 	return f
 }
 
-func NOT(expr Filter) Filter {
-	f := Logical{Op: op.Or, Children: []Filter{expr}}
+func Not(expr Filter) Filter {
+	f := LogicalFilter{Op: op.Not, Children: []Filter{expr}}
 	return f
 }
 
-func LIKE(field string, value string, method string) Filter {
-	f := Like{Field: field, Value: value, Method: method}
+func Like(field string, value string, method string) Filter {
+	f := LikeFilter{Field: field, Value: value, Method: method}
 	return f
 }
 
-func IN(field string, args ...any) Filter {
-	f := In{
+func In(field string, args ...any) Filter {
+	f := InFilter{
 		Field:  field,
 		Values: args,
 	}
 	return f
 }
 
-func BETWEEN(field string, from, to any) Filter {
-	f := Between{Field: field, From: from, To: to}
+func Between(field string, from, to any) Filter {
+	f := BetweenFilter{Field: field, From: from, To: to}
 	return f
 }

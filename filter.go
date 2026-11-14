@@ -4,10 +4,16 @@ type Filter interface {
 	Accept(Visitor) error
 }
 
+type MetaFilter interface {
+	Filter
+	Get(key string) string
+	GetAll() map[string]string
+}
+
 type Visitor interface {
-	VisitLogical(Logical) error
-	VisitComparison(Comparison) error
-	VisitLike(Like) error
-	VisitBetween(Between) error
-	VisitIn(In) error
+	VisitLogical(LogicalFilter) error
+	VisitComparison(CompareFilter) error
+	VisitLike(LikeFilter) error
+	VisitBetween(BetweenFilter) error
+	VisitIn(InFilter) error
 }
