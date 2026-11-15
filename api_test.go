@@ -35,13 +35,13 @@ func TestBasic(t *testing.T) {
 type B struct{}
 
 type A struct {
-	Price q.IntField[B]
+	Price q.Orderable[int, B]
 	Name  q.StringField[B]
 }
 
 func TestFn(t *testing.T) {
 	var a A = A{
-		Price: q.NewIntField[B]("price", ""),
+		Price: q.NewOrderable[int, B]("price", ""),
 		Name:  q.NewStringField[B]("Stesll", "df"),
 	}
 	s := f.Or(a.Price.Gte(200), a.Name.Eq("fnsdf"))
@@ -61,7 +61,7 @@ func TestFn(t *testing.T) {
 
 func TestFn2(t *testing.T) {
 	var a A = A{
-		Price: q.NewIntField[B]("price", ""),
+		Price: q.NewOrderable[int, B]("price", ""),
 		Name:  q.NewStringField[B]("Stesll", "df"),
 	}
 	s := a.Price.Gte(200)
