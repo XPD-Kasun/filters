@@ -10,6 +10,8 @@ import (
 
 func main() {
 	proQ := product.NewProductFilter()
-	q := f.And(proQ.Name.Eq("fn"), proQ.Price.Gt(100))
+	q := f.And(proQ.Name.Eq("fn"), proQ.Price.Gt(100), proQ.Someval.IsNull())
 	fmt.Println(sqlfilter.New(sqlfilter.PostgresConfig, q))
+	fmt.Println(sqlfilter.New(sqlfilter.MsSqlServerConfig, q))
+	fmt.Println(sqlfilter.New(sqlfilter.OracleConfig, q))
 }

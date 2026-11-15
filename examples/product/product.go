@@ -6,11 +6,12 @@ import "time"
 
 //genQuery
 type Product struct {
-	id    int
-	Name  string
-	Price float32
-	Mfg   time.Time
-	sku   string
+	id      int
+	Name    string
+	Price   float32
+	Mfg     time.Time
+	sku     string
+	SomeVal *int
 }
 
 func (p *Product) Id() int     { return p.id }

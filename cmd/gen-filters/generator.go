@@ -20,23 +20,21 @@ const (
 )
 
 var validTypes map[string]string = map[string]string{
-	"int":   "IntField",
-	"int16": "IntField",
-	"int32": "IntField",
-	"int64": "IntField",
-
-	"uint":   "IntField",
-	"uint8":  "IntField",
-	"uint16": "IntField",
-	"uint32": "IntField",
-	"uint64": "IntField",
-
-	"float32":   "FloatField",
-	"float64":   "FloatField",
-	"uuid.UUID": "UUIDField",
-	"time.Time": "DateTimeField",
-	"bool":      "BoolField",
-	"string":    "StringField",
+	"int":       "Orderable[int,%s]",
+	"int16":     "Orderable[int16,%s]",
+	"int32":     "Orderable[int32,%s]",
+	"int64":     "Orderable[int64,%s]",
+	"uint":      "Orderable[uint,%s]",
+	"uint8":     "Orderable[uint8,%s]",
+	"uint16":    "Orderable[uint16,%s]",
+	"uint32":    "Orderable[uint32,%s]",
+	"uint64":    "Orderable[uint64,%s]",
+	"float32":   "Orderable[float32,%s]",
+	"float64":   "Orderable[float64,%s]",
+	"uuid.UUID": "Orderable[uuid.UUID,%s]",
+	"time.Time": "Orderable[time.Time,%s]",
+	"bool":      "Equalable[bool,%s]",
+	"string":    "StringField[%s]",
 }
 
 type GenCtx struct {
@@ -58,6 +56,7 @@ type Generator struct {
 	fs            *token.FileSet
 	structMap     map[string][]*ast.FuncDecl
 	targetStructs map[string][]GenField
+	imports       map[string]bool
 }
 
 func NewGenerator(ctx *GenCtx) *Generator {
@@ -66,6 +65,7 @@ func NewGenerator(ctx *GenCtx) *Generator {
 		buf:           &strings.Builder{},
 		targetStructs: make(map[string][]GenField),
 		structMap:     make(map[string][]*ast.FuncDecl),
+		imports:       make(map[string]bool),
 	}
 }
 
@@ -144,6 +144,9 @@ func (g *Generator) discoverStructs() {
 					resolvedType := g.getValidExprType(f.Type)
 
 					if resolvedType != "" {
+						if _, ok := g.imports[resolvedType]; !ok {
+							g.imports[resolvedType] = true
+						}
 						g.targetStructs[k] = append(g.targetStructs[k], GenField{
 							Name: cases.Title(language.English).String(n.Name),
 							Type: resolvedType,
@@ -158,6 +161,11 @@ func (g *Generator) discoverStructs() {
 							resolvedType := g.getValidExprType(f.Type)
 
 							if resolvedType != "" {
+
+								if _, ok := g.imports[resolvedType]; !ok {
+									g.imports[resolvedType] = true
+								}
+
 								g.targetStructs[k] = append(g.targetStructs[k], GenField{
 									Name: cases.Title(language.English).String(n.Name),
 									Type: resolvedType,
@@ -208,7 +216,16 @@ func (g *Generator) writePackage() {
 	v.WriteString("\npackage ")
 	v.WriteString(g.ctx.pkg)
 	v.WriteString("\n\n")
-	v.WriteString("import(\n\t\"github.com/XPD-Kasun/filters/fields\"\n)\n\n")
+	v.WriteString("import(\n\t\"github.com/XPD-Kasun/filters/fields\"")
+	for k := range g.imports {
+		i := strings.IndexRune(k, '.')
+		if i > -1 {
+			v.WriteString("\n\t\"")
+			v.WriteString(k[:i])
+			v.WriteRune('"')
+		}
+	}
+	v.WriteString("\n)\n\n")
 }
 
 func (g *Generator) writeQueryStub() {
@@ -224,15 +241,12 @@ func (g *Generator) writeQueryStub() {
 			v.WriteString(field.Name)
 			v.WriteRune(' ')
 			if field.Type[0] == '*' {
-				v.WriteString("fields.")
-				v.WriteString(validTypes[field.Type[1:]])
+				v.WriteString("fields.Nullable")
+				v.WriteString(fmt.Sprintf(validTypes[field.Type[1:]], structName))
 			} else {
 				v.WriteString("fields.")
-				v.WriteString(validTypes[field.Type])
+				v.WriteString(fmt.Sprintf(validTypes[field.Type], structName))
 			}
-			v.WriteRune('[')
-			v.WriteString(structName)
-			v.WriteRune(']')
 			v.WriteRune('\n')
 		}
 
@@ -251,13 +265,13 @@ func (g *Generator) writeQueryStub() {
 			v.WriteString(field.Name)
 			v.WriteString(": ")
 			if field.Type[0] == '*' {
-				v.WriteString("fields.New")
-				v.WriteString(validTypes[field.Type[1:]])
-				v.WriteString(fmt.Sprintf(`[%s]("%s","%s"),%c`, structName, field.Name, Pascal(structName), '\n'))
+				v.WriteString("fields.NewNullable")
+				v.WriteString(fmt.Sprintf(validTypes[field.Type[1:]], structName))
+				v.WriteString(fmt.Sprintf(`("%s","%s"),%c`, field.Name, Pascal(structName), '\n'))
 			} else {
 				v.WriteString("fields.New")
-				v.WriteString(validTypes[field.Type])
-				v.WriteString(fmt.Sprintf(`[%s]("%s","%s"),%c`, structName, field.Name, Pascal(structName), '\n'))
+				v.WriteString(fmt.Sprintf(validTypes[field.Type], structName))
+				v.WriteString(fmt.Sprintf(`("%s","%s"),%c`, field.Name, Pascal(structName), '\n'))
 			}
 		}
 		v.WriteString("\t}\n")
