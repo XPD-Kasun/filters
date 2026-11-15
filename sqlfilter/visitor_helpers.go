@@ -140,3 +140,30 @@ func FormatPlaceholder(cfg SqlConfig, order int) string {
 		return fmt.Sprintf("$%d", order)
 	}
 }
+
+func pathSegCount(path string) int {
+	return len(strings.Split(path, "."))
+}
+
+func pathEntityAndField(path string) (string, string) {
+
+	pathSeg := strings.Split(path, ".")
+
+	if len(pathSeg) == 1 {
+		return "", path
+	}
+
+	return pathSeg[len(pathSeg)-2], pathSeg[len(pathSeg)-1]
+
+}
+
+func pathEntitiesAndField(path string) (string, string) {
+	segCount := strings.Count(path, ".")
+
+	if segCount <= 1 {
+		return "", path
+	}
+
+	lastDotIndex := strings.LastIndex(path, ".")
+	return path[:lastDotIndex], path[lastDotIndex+1:]
+}

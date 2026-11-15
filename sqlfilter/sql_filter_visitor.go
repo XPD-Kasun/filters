@@ -52,6 +52,35 @@ var opMap = map[op.Operator]string{
 	op.Nq:      "!=",
 }
 
+// formatField applies entity/field segment mapping and dialect-specific identifier quoting.
+func (v *SqlFilter) formatField(field string) string {
+	mapped := v.mapEntityFieldNames(field)
+	return QuoteIdentifier(v.sqlConfig, mapped)
+}
+
+func (v *SqlFilter) mapEntityFieldNames(pathField string) string {
+	if len(v.sqlConfig.fields) == 0 {
+		return pathField
+	}
+	entities := strings.Split(pathField, ".")
+	mappedPath := make([]string, len(entities))
+
+	for i, entity := range entities {
+		normalisedEntity := entity
+		if !v.sqlConfig.CaseSensitive {
+			normalisedEntity = strings.ToLower(entity)
+		}
+
+		if val, hasEntity := v.sqlConfig.fields[normalisedEntity]; hasEntity {
+			mappedPath[i] = val
+		} else {
+			mappedPath[i] = entity
+		}
+	}
+
+	return strings.Join(mappedPath, ".")
+}
+
 // VisitComparison implements [filters.Visitor].
 func (v *SqlFilter) VisitComparison(op filters.CompareFilter) error {
 	if op.Value == nil {
@@ -73,12 +102,12 @@ func (v *SqlFilter) compareNull(field string, operator op.Operator) error {
 		return fmt.Errorf("SqlFilter: operator %v is not compatible with nil", operator)
 	}
 
-	quoted := QuoteIdentifier(v.Config(), field)
+	formattedField := v.formatField(field)
 	if v.sqlConfig.Logger != nil {
-		v.sqlConfig.Logger.Debug("sqlfilter: visiting null comparison", "field", quoted, "operator", nullstr)
+		v.sqlConfig.Logger.Debug("sqlfilter: visiting null comparison", "field", formattedField, "operator", nullstr)
 	}
 
-	w.WriteString(quoted)
+	w.WriteString(formattedField)
 	w.WriteString(nullstr)
 	return nil
 }
@@ -124,13 +153,13 @@ func (v *SqlFilter) VisitLogical(l filters.LogicalFilter) error {
 // VisitBetween implements filters.Visitor.
 func (v *SqlFilter) VisitBetween(a filters.BetweenFilter) error {
 	w := v.buf
-	quotedField := QuoteIdentifier(v.sqlConfig, a.Field)
+	formattedField := v.formatField(a.Field)
 
 	if v.sqlConfig.Logger != nil {
-		v.sqlConfig.Logger.Debug("sqlfilter: visiting between filter", "field", quotedField, "from", a.From, "to", a.To)
+		v.sqlConfig.Logger.Debug("sqlfilter: visiting between filter", "field", formattedField, "from", a.From, "to", a.To)
 	}
 
-	w.WriteString(quotedField)
+	w.WriteString(formattedField)
 	w.WriteString(" BETWEEN ")
 	v.paramOrder++
 	w.WriteString(FormatPlaceholder(v.sqlConfig, v.paramOrder))
@@ -144,13 +173,13 @@ func (v *SqlFilter) VisitBetween(a filters.BetweenFilter) error {
 
 func (v *SqlFilter) comparison(field string, operator string, val any) error {
 	w := v.buf
-	quotedField := QuoteIdentifier(v.sqlConfig, field)
+	formattedField := v.formatField(field)
 
 	if v.sqlConfig.Logger != nil {
-		v.sqlConfig.Logger.Debug("sqlfilter: visiting comparison", "field", quotedField, "operator", operator, "value", val)
+		v.sqlConfig.Logger.Debug("sqlfilter: visiting comparison", "field", formattedField, "operator", operator, "value", val)
 	}
 
-	w.WriteString(quotedField)
+	w.WriteString(formattedField)
 	w.WriteRune(' ')
 	w.WriteString(operator)
 	w.WriteRune(' ')
@@ -176,10 +205,10 @@ func (v *SqlFilter) VisitIn(op filters.InFilter) error {
 	}
 
 	w := v.buf
-	quotedField := QuoteIdentifier(v.sqlConfig, op.Field)
+	formattedField := v.formatField(op.Field)
 
 	if v.sqlConfig.Logger != nil {
-		v.sqlConfig.Logger.Debug("sqlfilter: visiting in filter", "field", quotedField, "valuesCount", len(op.Values))
+		v.sqlConfig.Logger.Debug("sqlfilter: visiting in filter", "field", formattedField, "valuesCount", len(op.Values))
 	}
 
 	s := make([]string, len(op.Values))
@@ -189,7 +218,7 @@ func (v *SqlFilter) VisitIn(op filters.InFilter) error {
 		v.args = append(v.args, val)
 	}
 
-	w.WriteString(quotedField)
+	w.WriteString(formattedField)
 	w.WriteString(" IN (")
 	w.WriteString(strings.Join(s, ","))
 	w.WriteString(")")
@@ -200,7 +229,7 @@ func (v *SqlFilter) VisitIn(op filters.InFilter) error {
 // VisitLike implements filters.Visitor.
 func (v *SqlFilter) VisitLike(op filters.LikeFilter) error {
 	w := v.buf
-	quotedField := QuoteIdentifier(v.sqlConfig, op.Field)
+	formattedField := v.formatField(op.Field)
 
 	// regular like semantics
 	if op.Method == "" {
@@ -208,10 +237,10 @@ func (v *SqlFilter) VisitLike(op filters.LikeFilter) error {
 		placeholder := FormatPlaceholder(v.sqlConfig, v.paramOrder)
 
 		if v.sqlConfig.Logger != nil {
-			v.sqlConfig.Logger.Debug("sqlfilter: visiting like filter", "field", quotedField, "pattern", op.Value, "placeholder", placeholder)
+			v.sqlConfig.Logger.Debug("sqlfilter: visiting like filter", "field", formattedField, "pattern", op.Value, "placeholder", placeholder)
 		}
 
-		w.WriteString(quotedField)
+		w.WriteString(formattedField)
 		w.WriteString(" LIKE ")
 		w.WriteString(placeholder)
 
@@ -225,10 +254,10 @@ func (v *SqlFilter) VisitLike(op filters.LikeFilter) error {
 		placeholder := FormatPlaceholder(v.sqlConfig, v.paramOrder)
 
 		if v.sqlConfig.Logger != nil {
-			v.sqlConfig.Logger.Debug("sqlfilter: visiting regex filter", "field", quotedField, "pattern", op.Value, "placeholder", placeholder)
+			v.sqlConfig.Logger.Debug("sqlfilter: visiting regex filter", "field", formattedField, "pattern", op.Value, "placeholder", placeholder)
 		}
 
-		w.WriteString(FormatRegex(v.sqlConfig.Name, quotedField, placeholder))
+		w.WriteString(FormatRegex(v.sqlConfig.Name, formattedField, placeholder))
 		v.args = append(v.args, op.Value)
 		return nil
 	}
@@ -237,6 +266,10 @@ func (v *SqlFilter) VisitLike(op filters.LikeFilter) error {
 }
 
 func (v *SqlFilter) String() string {
+	return v.Sql()
+}
+
+func (v *SqlFilter) Sql() string {
 	return v.buf.String()
 }
 

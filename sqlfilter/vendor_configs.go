@@ -1,6 +1,9 @@
 package sqlfilter
 
-import "log/slog"
+import (
+	"log/slog"
+	"strings"
+)
 
 type SqlConfig struct {
 	Name             SqlVariant
@@ -9,7 +12,36 @@ type SqlConfig struct {
 	QuoteOpen        rune
 	QuoteClose       rune
 	NumericBooleans  bool
+	CaseSensitive    bool
 	Logger           *slog.Logger
+
+	fields map[string]string
+}
+
+// WithFields returns a copy of the SqlConfig with the specified entity-to-alias mappings.
+func (c SqlConfig) WithFields(m map[string]string) SqlConfig {
+	if m == nil {
+		c.fields = nil
+		return c
+	}
+	c.fields = make(map[string]string, len(m))
+	for k, v := range m {
+		key := k
+		if !c.CaseSensitive {
+			key = strings.ToLower(k)
+		}
+		c.fields[key] = v
+	}
+	return c
+}
+
+// WithCaseSensitive returns a copy of the SqlConfig with CaseSensitive set to enabled.
+func (c SqlConfig) WithCaseSensitive(enabled bool) SqlConfig {
+	c.CaseSensitive = enabled
+	if len(c.fields) > 0 {
+		return c.WithFields(c.fields)
+	}
+	return c
 }
 
 var PostgresConfig = SqlConfig{

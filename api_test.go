@@ -278,3 +278,68 @@ func TestSqlFilterLogging(t *testing.T) {
 		t.Errorf("expected DEBUG log in output, got: %s", logOutput)
 	}
 }
+
+func TestEntityFieldMapping(t *testing.T) {
+	fieldMappings := map[string]string{
+		"order":    "o",
+		"customer": "c",
+	}
+
+	// 1. Comparison with unquoted fields: order.customer.price -> o.c.price
+	cfgUnquoted := sqlfilter.PostgresConfig.WithFields(fieldMappings)
+	filter1 := f.Gte("order.customer.price", 200)
+	sf1, err := sqlfilter.New(cfgUnquoted, filter1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sf1.String() != "o.c.price >= $1" {
+		t.Errorf("got %q, want %q", sf1.String(), "o.c.price >= $1")
+	}
+
+	// 2. Comparison with quoted fields: order.customer.price -> "o"."c"."price"
+	cfgQuoted := sqlfilter.PostgresConfig.WithQuoting(true).WithFields(fieldMappings)
+	sf2, err := sqlfilter.New(cfgQuoted, filter1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedQuoted := `"o"."c"."price" >= $1`
+	if sf2.String() != expectedQuoted {
+		t.Errorf("got %q, want %q", sf2.String(), expectedQuoted)
+	}
+
+	// 3. Across Between, In, Like, and IS NULL
+	complexFilter := f.And(
+		f.Between("order.customer.price", 100, 500),
+		f.In("order.customer.status", "active", "vip"),
+		f.Like("order.customer.name", "Smith%", ""),
+		f.Eq("order.customer.deleted_at", nil),
+	)
+	sf3, err := sqlfilter.New(cfgQuoted, complexFilter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedComplex := `("o"."c"."price" BETWEEN $1 and $2 and "o"."c"."status" IN ($3,$4) and "o"."c"."name" LIKE $5 and "o"."c"."deleted_at" IS NULL)`
+	if sf3.String() != expectedComplex {
+		t.Errorf("got %q, want %q", sf3.String(), expectedComplex)
+	}
+
+	// 4. Case-insensitive segment matching (Order.Customer.Price -> o.c.Price)
+	filterCase := f.Eq("Order.Customer.Price", 300)
+	sf4, err := sqlfilter.New(cfgUnquoted, filterCase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sf4.String() != "o.c.Price = $1" {
+		t.Errorf("got %q, want o.c.Price = $1", sf4.String())
+	}
+
+	// 5. Unmapped fields remain unchanged
+	filterUnmapped := f.Eq("simple_field", 42)
+	sf5, err := sqlfilter.New(cfgUnquoted, filterUnmapped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sf5.String() != "simple_field = $1" {
+		t.Errorf("got %q, want simple_field = $1", sf5.String())
+	}
+}
