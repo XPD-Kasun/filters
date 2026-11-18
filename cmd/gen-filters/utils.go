@@ -2,6 +2,7 @@ package main
 
 import "unicode"
 
+//functional map func for converting between types. Similar to js version.
 func Map[T any, U any](items []T, mapper func(T) U) []U {
 	var val []U = make([]U, len(items))
 	for i, item := range items {

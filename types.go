@@ -6,10 +6,13 @@ import (
 	"github.com/XPD-Kasun/filters/op"
 )
 
+// Defines core filter implementations.
+
 type LikeFilter struct {
-	Field  string
-	Value  string
-	Method string
+	Field         string
+	Value         string
+	Method        string
+	CaseSensitive bool
 }
 
 func (op LikeFilter) Accept(v Visitor) error {
@@ -44,6 +47,14 @@ func (l LogicalFilter) Accept(v Visitor) error {
 	return v.VisitLogical(l)
 }
 
+type NotFilter struct {
+	Child Filter
+}
+
+func (n NotFilter) Accept(v Visitor) error {
+	return v.VisitNot(n)
+}
+
 type CompareFilter struct {
 	Op    op.Operator
 	Field string
@@ -75,4 +86,11 @@ func (m *MetaFilterImpl) GetAll() map[string]string {
 
 func (m *MetaFilterImpl) Set(key, value string) {
 	m.meta[key] = value
+}
+
+type EmptyFilter struct {
+}
+
+func (em EmptyFilter) Accept(v Visitor) error {
+	return nil
 }

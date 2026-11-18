@@ -4,7 +4,8 @@ import (
 	"strings"
 )
 
-// EntityVisitor traverses a Filter AST to extract unique entity/table names from field paths.
+// EntityVisitor traverses a Filter AST to extract unique entity names
+// from field paths.
 type EntityVisitor struct {
 	entities map[string]struct{}
 	ordered  []string
@@ -12,11 +13,19 @@ type EntityVisitor struct {
 
 var _ Visitor = &EntityVisitor{}
 
-// NewEntityVisitor creates a new EntityVisitor.
+// NewEntityVisitor creates a new EntityVisitor
 func NewEntityVisitor() *EntityVisitor {
 	return &EntityVisitor{
 		entities: make(map[string]struct{}),
 	}
+}
+
+// VisitNot implements [Visitor]
+func (v *EntityVisitor) VisitNot(field NotFilter) error {
+	if IsEmpty(field.Child) {
+		return nil
+	}
+	return field.Child.Accept(v)
 }
 
 // addFromField extracts entity prefixes from a dot-delimited field path

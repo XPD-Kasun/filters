@@ -3,6 +3,7 @@ package main
 import (
 	"log/slog"
 	"os"
+	"runtime"
 	"strings"
 )
 
@@ -29,6 +30,7 @@ func main() {
 	slog.SetDefault(logger)
 
 	slog.Info("starting go-filters generator", "version", Version)
+	slog.Info("GO version", "version", runtime.Version())
 	slog.Debug("command line arguments", "args", args)
 
 	gofile := os.Getenv("GOFILE")

@@ -1,8 +1,10 @@
 package filters_test
 
 import (
+	"errors"
 	"log/slog"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -18,7 +20,7 @@ func TestBasic(t *testing.T) {
 		f.Between("fdsi", 10, 200),
 		f.Between("fdsi23", 10, 200),
 	)
-	filter, err := sqlfilter.New(sqlfilter.PostgresConfig, s)
+	filter, err := sqlfilter.New(sqlfilter.UsePostgres(), s)
 	if err != nil {
 		t.Fatal(err.Error())
 	}
@@ -45,7 +47,7 @@ func TestFn(t *testing.T) {
 		Name:  q.NewStringField[B]("Stesll", "df"),
 	}
 	s := f.Or(a.Price.Gte(200), a.Name.Eq("fnsdf"))
-	w := sqlfilter.NewEmpty(sqlfilter.PostgresConfig)
+	w := sqlfilter.NewEmpty(sqlfilter.UsePostgres())
 	if err := s.Accept(w); err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +67,7 @@ func TestFn2(t *testing.T) {
 		Name:  q.NewStringField[B]("Stesll", "df"),
 	}
 	s := a.Price.Gte(200)
-	w := sqlfilter.NewEmpty(sqlfilter.PostgresConfig)
+	w := sqlfilter.NewEmpty(sqlfilter.UsePostgres())
 	if err := s.Accept(w); err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +83,7 @@ func TestFn2(t *testing.T) {
 
 func TestNotFilter(t *testing.T) {
 	s := f.Not(f.Eq("status", "deleted"))
-	sf, err := sqlfilter.New(sqlfilter.PostgresConfig, s)
+	sf, err := sqlfilter.New(sqlfilter.UsePostgres(), s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +99,7 @@ func TestNotFilter(t *testing.T) {
 func TestNilComparison(t *testing.T) {
 	// Eq nil -> IS NULL
 	filterEq := f.Eq("deleted_at", nil)
-	sfEq, err := sqlfilter.New(sqlfilter.PostgresConfig, filterEq)
+	sfEq, err := sqlfilter.New(sqlfilter.UsePostgres(), filterEq)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,8 +111,8 @@ func TestNilComparison(t *testing.T) {
 	}
 
 	// Nq nil -> IS NOT NULL
-	filterNq := f.Nq("deleted_at", nil)
-	sfNq, err := sqlfilter.New(sqlfilter.PostgresConfig, filterNq)
+	filterNq := f.Neq("deleted_at", nil)
+	sfNq, err := sqlfilter.New(sqlfilter.UsePostgres(), filterNq)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,13 +130,13 @@ func TestRegexDialects(t *testing.T) {
 		cfg      sqlfilter.SqlConfig
 		expected string
 	}{
-		{"Postgres", sqlfilter.PostgresConfig, "username ~ $1"},
-		{"CockroachDB", sqlfilter.CockroachDBConfig, "username ~ $1"},
-		{"MySQL", sqlfilter.MySqlConfig, "username REGEXP ?"},
-		{"ClickHouse", sqlfilter.ClickHouseConfig, "match(username, ?)"},
-		{"Oracle", sqlfilter.OracleConfig, "REGEXP_LIKE(username, :1)"},
-		{"MsSqlServer", sqlfilter.MsSqlServerConfig, "username LIKE @p1"},
-		{"SQLite", sqlfilter.SQLiteConfig, "username REGEXP ?"},
+		{"Postgres", sqlfilter.UsePostgres(), "username ~ $1"},
+		{"CockroachDB", sqlfilter.UseCockroachDB(), "username ~ $1"},
+		{"MySQL", sqlfilter.UseMySQL(), "username REGEXP ?"},
+		{"ClickHouse", sqlfilter.UseClickHouse(), "match(username, ?)"},
+		{"Oracle", sqlfilter.UseOracle(), "REGEXP_LIKE(username, :1)"},
+		{"MsSqlServer", sqlfilter.UseMsSqlServer(), "username LIKE @p1"},
+		{"SQLite", sqlfilter.UseSQLite(), "username REGEXP ?"},
 	}
 
 	for _, tt := range tests {
@@ -161,7 +163,7 @@ func TestIdentifierQuoting(t *testing.T) {
 	)
 
 	// Postgres quotes with " and uses $1, $2, $3
-	pgCfg := sqlfilter.PostgresConfig.WithQuoting(true)
+	pgCfg := sqlfilter.UsePostgres().WithQuoting(sqlfilter.QuoteAlways)
 	sfPg, err := sqlfilter.New(pgCfg, filter)
 	if err != nil {
 		t.Fatal(err)
@@ -176,7 +178,7 @@ func TestIdentifierQuoting(t *testing.T) {
 	}
 
 	// MySQL quotes with ` and uses ?
-	myCfg := sqlfilter.MySqlConfig.WithQuoting(true)
+	myCfg := sqlfilter.UseMySQL().WithQuoting(sqlfilter.QuoteAlways)
 	sfMy, err := sqlfilter.New(myCfg, filter)
 	if err != nil {
 		t.Fatal(err)
@@ -187,7 +189,7 @@ func TestIdentifierQuoting(t *testing.T) {
 	}
 
 	// SQL Server quotes with [ ] and uses @p1, @p2, @p3
-	msCfg := sqlfilter.MsSqlServerConfig.WithQuoting(true)
+	msCfg := sqlfilter.UseMsSqlServer().WithQuoting(sqlfilter.QuoteAlways)
 	sfMs, err := sqlfilter.New(msCfg, filter)
 	if err != nil {
 		t.Fatal(err)
@@ -199,17 +201,17 @@ func TestIdentifierQuoting(t *testing.T) {
 }
 
 func TestNumericBooleans(t *testing.T) {
-	valPg, err := sqlfilter.ParseWithConfig(sqlfilter.PostgresConfig, true)
+	valPg, err := sqlfilter.ParseWithConfig(sqlfilter.UsePostgres(), true)
 	if err != nil || valPg != "TRUE" {
 		t.Errorf("Postgres bool: got %q, want TRUE", valPg)
 	}
 
-	valMs, err := sqlfilter.ParseWithConfig(sqlfilter.MsSqlServerConfig, true)
+	valMs, err := sqlfilter.ParseWithConfig(sqlfilter.UseMsSqlServer(), true)
 	if err != nil || valMs != "1" {
 		t.Errorf("SQL Server bool: got %q, want 1", valMs)
 	}
 
-	valOra, err := sqlfilter.ParseWithConfig(sqlfilter.OracleConfig, true)
+	valOra, err := sqlfilter.ParseWithConfig(sqlfilter.UseOracle(), true)
 	if err != nil || valOra != "1" {
 		t.Errorf("Oracle bool: got %q, want 1", valOra)
 	}
@@ -247,7 +249,7 @@ func TestParseTypes(t *testing.T) {
 
 func TestEmptyInFilter(t *testing.T) {
 	filter := f.In("id")
-	_, err := sqlfilter.New(sqlfilter.PostgresConfig, filter)
+	_, err := sqlfilter.New(sqlfilter.UsePostgres(), filter)
 	if err == nil {
 		t.Fatal("expected error for empty IN filter, got nil")
 	}
@@ -259,7 +261,7 @@ func TestSqlFilterLogging(t *testing.T) {
 		Level: slog.LevelDebug,
 	}))
 
-	cfg := sqlfilter.PostgresConfig.WithLogger(logger)
+	cfg := sqlfilter.UsePostgres().WithLogger(logger)
 	filter := f.And(
 		f.Eq("status", "active"),
 		f.Between("age", 18, 65),
@@ -286,7 +288,7 @@ func TestEntityFieldMapping(t *testing.T) {
 	}
 
 	// 1. Comparison with unquoted fields: order.customer.price -> o.c.price
-	cfgUnquoted := sqlfilter.PostgresConfig.WithFields(fieldMappings)
+	cfgUnquoted := sqlfilter.UsePostgres().WithFields(fieldMappings)
 	filter1 := f.Gte("order.customer.price", 200)
 	sf1, err := sqlfilter.New(cfgUnquoted, filter1)
 	if err != nil {
@@ -297,7 +299,7 @@ func TestEntityFieldMapping(t *testing.T) {
 	}
 
 	// 2. Comparison with quoted fields: order.customer.price -> "o"."c"."price"
-	cfgQuoted := sqlfilter.PostgresConfig.WithQuoting(true).WithFields(fieldMappings)
+	cfgQuoted := sqlfilter.UsePostgres().WithQuoting(sqlfilter.QuoteAlways).WithFields(fieldMappings)
 	sf2, err := sqlfilter.New(cfgQuoted, filter1)
 	if err != nil {
 		t.Fatal(err)
@@ -341,5 +343,140 @@ func TestEntityFieldMapping(t *testing.T) {
 	}
 	if sf5.String() != "simple_field = $1" {
 		t.Errorf("got %q, want simple_field = $1", sf5.String())
+	}
+}
+
+// TestQuotingEscaping verifies that closing-character doubling is applied per
+// dialect and that Oracle rejects double-quotes inside identifiers.
+func TestQuotingEscaping(t *testing.T) {
+	// Postgres: double-quote inside identifier → doubled.
+	// Field name: say`me → `say``me` with backtick style (MySQL)
+	filter := f.Eq("say`field", 1)
+	myCfg := sqlfilter.UseMySQL().WithQuoting(sqlfilter.QuoteAlways)
+	sf, err := sqlfilter.New(myCfg, filter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// closing backtick should be doubled
+	if sf.String() != "`say``field` = ?" {
+		t.Errorf("MySQL escaping: got %q", sf.String())
+	}
+	// SQL Server: ] inside identifier → ]]
+	filter2 := f.Eq("col]umn", 1)
+	msCfg := sqlfilter.UseMsSqlServer().WithQuoting(sqlfilter.QuoteAlways)
+	sf2, err := sqlfilter.New(msCfg, filter2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sf2.String() != "[col]]umn] = @p1" {
+		t.Errorf("SQL Server ] escaping: got %q", sf2.String())
+	}
+
+	// Oracle: double-quote inside identifier → error
+	filter3 := f.Eq(`col"umn`, 1)
+	oraCfg := sqlfilter.UseOracle().WithQuoting(sqlfilter.QuoteAlways)
+	_, err3 := sqlfilter.New(oraCfg, filter3)
+	if err3 == nil {
+		t.Error("Oracle: expected error for double-quote in identifier, got nil")
+	}
+}
+
+// TestStartAt verifies that parameter numbering can be offset for multi-fragment queries.
+func TestStartAt(t *testing.T) {
+	filter := f.And(f.Eq("a", 1), f.Eq("b", 2))
+	sf, err := sqlfilter.New(sqlfilter.UsePostgres(), filter, sqlfilter.StartAt(3))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "(a = $4 and b = $5)"
+	if sf.String() != want {
+		t.Errorf("StartAt(3): got %q, want %q", sf.String(), want)
+	}
+}
+
+// TestIdentifierLengthLimit verifies that identifiers exceeding the dialect
+// byte limit produce an error rather than a silent truncation.
+func TestIdentifierLengthLimit(t *testing.T) {
+	longName := strings.Repeat("x", 64) // Postgres limit is 63
+	filter := f.Eq(longName, 1)
+	_, err := sqlfilter.New(sqlfilter.UsePostgres().WithQuoting(sqlfilter.QuoteAlways), filter)
+	if err == nil {
+		t.Error("expected error for identifier exceeding Postgres 63-byte limit, got nil")
+	}
+}
+
+// TestWithPlaceholder verifies that a custom PlaceholderFunc overrides the default.
+func TestWithPlaceholder(t *testing.T) {
+	custom := sqlfilter.PlaceholderFunc(func(order int) string {
+		return "{{" + strconv.Itoa(order) + "}}"
+	})
+	cfg := sqlfilter.UsePostgres().WithPlaceholder(custom)
+	sf, err := sqlfilter.New(cfg, f.Eq("x", 42))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sf.String() != "x = {{1}}" {
+		t.Errorf("custom placeholder: got %q", sf.String())
+	}
+}
+
+// TestNilChildrenAndEmptyFilter verifies that nil / empty filters are discarded
+// and do not cause nil panics or malformed SQL.
+func TestNilChildrenAndEmptyFilter(t *testing.T) {
+	// And with nil elements
+	filterAnd := f.And(nil, f.Eq("a", 1), f.EmptyFilter{}, f.Eq("b", 2))
+	sfAnd, err := sqlfilter.New(sqlfilter.UsePostgres(), filterAnd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantAnd := "(a = $1 and b = $2)"
+	if sfAnd.String() != wantAnd {
+		t.Errorf("got %q, want %q", sfAnd.String(), wantAnd)
+	}
+
+	// All nil in And -> EmptyFilter
+	allNilAnd := f.And(nil, nil)
+	sfEmpty, err := sqlfilter.New(sqlfilter.UsePostgres(), allNilAnd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sfEmpty.String() != "" {
+		t.Errorf("expected empty SQL for all-nil And, got %q", sfEmpty.String())
+	}
+
+	// Not with nil
+	notNil := f.Not(nil)
+	sfNotNil, err := sqlfilter.New(sqlfilter.UsePostgres(), notNil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sfNotNil.String() != "" {
+		t.Errorf("expected empty SQL for Not(nil), got %q", sfNotNil.String())
+	}
+}
+
+// TestErrUnsupportedSentinel verifies that unsupported operations return
+// an error wrapping filters.ErrUnsupported.
+func TestErrUnsupportedSentinel(t *testing.T) {
+	// 1. Unsupported LIKE method
+	filterLike := f.Like("name", "foo", "custom_unknown")
+	_, err := sqlfilter.New(sqlfilter.UsePostgres(), filterLike)
+	if !errors.Is(err, f.ErrUnsupported) {
+		t.Errorf("expected ErrUnsupported for unknown LIKE method, got %v", err)
+	}
+
+	// 2. Unsupported operator with nil (e.g. Gt with nil)
+	filterGtNil := f.Gt("age", nil)
+	_, err = sqlfilter.New(sqlfilter.UsePostgres(), filterGtNil)
+	if !errors.Is(err, f.ErrUnsupported) {
+		t.Errorf("expected ErrUnsupported for Gt with nil, got %v", err)
+	}
+
+	// 3. Identifier length exceeded
+	longName := strings.Repeat("z", 70)
+	filterLong := f.Eq(longName, 1)
+	_, err = sqlfilter.New(sqlfilter.UsePostgres().WithQuoting(sqlfilter.QuoteAlways), filterLong)
+	if !errors.Is(err, f.ErrUnsupported) {
+		t.Errorf("expected ErrUnsupported for identifier length limit, got %v", err)
 	}
 }

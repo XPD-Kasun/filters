@@ -10,13 +10,10 @@ import (
 	"strings"
 	"time"
 	"unicode"
-
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
 )
 
 const (
-	GEN_MARKER = "//genQuery"
+	GEN_MARKERX = "//gen:query"
 )
 
 var validTypes map[string]string = map[string]string{
@@ -31,7 +28,7 @@ var validTypes map[string]string = map[string]string{
 	"uint64":    "Orderable[uint64,%s]",
 	"float32":   "Orderable[float32,%s]",
 	"float64":   "Orderable[float64,%s]",
-	"uuid.UUID": "Orderable[uuid.UUID,%s]",
+	"uuid.UUID": "Equalable[uuid.UUID,%s]",
 	"time.Time": "Orderable[time.Time,%s]",
 	"bool":      "Equalable[bool,%s]",
 	"string":    "StringField[%s]",
@@ -103,10 +100,10 @@ func (g *Generator) discoverStructs() {
 
 	for _, c := range file.Comments {
 		for _, k := range c.List {
-			if strings.TrimSpace(k.Text) == GEN_MARKER {
+			if strings.TrimSpace(k.Text) == GEN_MARKERX {
 				line := g.getLine(k)
 				lineMap[line] = 1
-				slog.Debug("found generator marker", "marker", GEN_MARKER, "line", line)
+				slog.Debug("found generator marker", "marker", GEN_MARKERX, "line", line)
 			}
 		}
 	}
@@ -134,10 +131,13 @@ func (g *Generator) discoverStructs() {
 	}
 
 	for k, v := range fileStructMap {
-		if _, ok := g.structMap[k]; !ok {
-			continue
-		}
+
+		// if _, ok := g.structMap[k]; !ok {
+		// 	continue
+		// }
+
 		for _, f := range v.Type.(*ast.StructType).Fields.List {
+
 			for _, n := range f.Names {
 				if unicode.IsUpper([]rune(n.Name)[0]) {
 
@@ -148,7 +148,7 @@ func (g *Generator) discoverStructs() {
 							g.imports[resolvedType] = true
 						}
 						g.targetStructs[k] = append(g.targetStructs[k], GenField{
-							Name: cases.Title(language.English).String(n.Name),
+							Name: Pascal(n.Name),
 							Type: resolvedType,
 						})
 					}
@@ -167,7 +167,7 @@ func (g *Generator) discoverStructs() {
 								}
 
 								g.targetStructs[k] = append(g.targetStructs[k], GenField{
-									Name: cases.Title(language.English).String(n.Name),
+									Name: Pascal(n.Name),
 									Type: resolvedType,
 								})
 							}
@@ -275,13 +275,16 @@ func (g *Generator) writeQueryStub() {
 			}
 		}
 		v.WriteString("\t}\n")
-		v.WriteString("}\n")
+		v.WriteString("}\n\n")
 	}
 }
 
 func (g *Generator) getValidExprType(tn ast.Expr) string {
 	var i = 0
 	resolvedType := g.getExprType(tn)
+	if resolvedType == "" {
+		return ""
+	}
 	if resolvedType[0] == '*' {
 		i = 1
 	}

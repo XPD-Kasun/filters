@@ -8,12 +8,12 @@ import (
 	"time"
 )
 
-// Parse converts an arbitrary Go value into a valid SQL literal string using default Postgres configuration.
+// Parse converts an arbitrary Go value into a valid SQL literal string using the default Postgres configuration.
 func Parse(val any) (string, error) {
-	return ParseWithConfig(PostgresConfig, val)
+	return ParseWithConfig(UsePostgres(), val)
 }
 
-// ParseWithConfig converts an arbitrary Go value into a valid SQL literal string based on the given SqlConfig.
+// ParseWithConfig converts an arbitrary Go value into a valid SQL string based on the given SqlConfig.
 func ParseWithConfig(cfg SqlConfig, val any) (string, error) {
 	if val == nil {
 		return "NULL", nil
@@ -23,6 +23,7 @@ func ParseWithConfig(cfg SqlConfig, val any) (string, error) {
 	case string:
 		escaped := strings.ReplaceAll(v, "'", "''")
 		return fmt.Sprintf("'%s'", escaped), nil
+
 	case bool:
 		if cfg.NumericBooleans {
 			if v {
@@ -60,110 +61,102 @@ func ParseWithConfig(cfg SqlConfig, val any) (string, error) {
 		return strconv.FormatFloat(float64(v), 'g', -1, 32), nil
 	case float64:
 		return strconv.FormatFloat(v, 'g', -1, 64), nil
+	case fmt.Stringer:
+		str := v.String()
+		escaped := strings.ReplaceAll(str, "'", "''")
+		return fmt.Sprintf("'%s'", escaped), nil
 	}
 	return "", errors.New("cannot parse given value to string")
 }
 
-// QuoteIdentifier safely quotes a table or column name based on the dialect's QuoteOpen and QuoteClose characters.
-func QuoteIdentifier(cfg SqlConfig, field string) string {
-	if !cfg.QuoteIdentifiers || cfg.QuoteOpen == 0 || cfg.QuoteClose == 0 {
-		return field
+// QuoteIdentifier quotes a dot-separated identifier path using the dialect's
+// QuoteStyle, only when the config's QuotePolicy is QuoteAlways. Each segment
+// is quoted and escaped independently so that "schema"."table" is produced
+// rather than the erroneous "schema.table".
+//
+// Rules:
+//   - QuoteNever: returns the path unchanged.
+//   - Null bytes are rejected for all dialects.
+//   - Oracle rejects double quotes inside a doubly quoted identifier.
+//   - The closing character is escaped by doubling (SQL standard).
+func QuoteIdentifier(cfg SqlConfig, path string) (string, error) {
+	if cfg.quotePolicy == QuoteNever {
+		return path, nil
 	}
-	if field == "" || field == "*" {
-		return field
+	if path == "" || path == "*" {
+		return path, nil
 	}
 
-	parts := strings.Split(field, ".")
-	for i, p := range parts {
-		trimmed := strings.TrimSpace(p)
-		if trimmed == "*" {
-			parts[i] = trimmed
+	open, close := quoteStyleChars(cfg.quoteStyle)
+	parts := strings.Split(path, ".")
+	out := make([]string, len(parts))
+
+	for i, seg := range parts {
+		seg = strings.TrimSpace(seg)
+		if seg == "*" {
+			out[i] = seg
 			continue
 		}
-		// Avoid double-quoting if already quoted
-		if len(trimmed) > 1 && rune(trimmed[0]) == cfg.QuoteOpen && rune(trimmed[len(trimmed)-1]) == cfg.QuoteClose {
-			parts[i] = trimmed
-			continue
+		if strings.ContainsRune(seg, 0) {
+			return "", fmt.Errorf("sqlfilter: identifier %q contains a null byte", seg)
 		}
-		parts[i] = fmt.Sprintf("%c%s%c", cfg.QuoteOpen, trimmed, cfg.QuoteClose)
+		if cfg.Name == OracleVariant && close == '"' && strings.ContainsRune(seg, '"') {
+			return "", fmt.Errorf("sqlfilter: Oracle does not allow double-quotes inside a quoted identifier: %q", seg)
+		}
+		escaped := strings.ReplaceAll(seg, string(close), string(close)+string(close))
+		out[i] = string(open) + escaped + string(close)
 	}
-	return strings.Join(parts, ".")
+	return strings.Join(out, "."), nil
 }
 
 // FormatRegex constructs a SQL regex expression based on the target SQL variant.
 func FormatRegex(variant SqlVariant, field, pattern string) string {
 	switch variant {
-	case Postgres, CockroachDB:
-		// Postgres & CockroachDB standard POSIX regex operator
+	case PostgresVariant, CockroachDBVariant:
 		return fmt.Sprintf("%s ~ %s", field, pattern)
-	case Oracle:
-		// Oracle REGEXP_LIKE function
+	case OracleVariant:
 		return fmt.Sprintf("REGEXP_LIKE(%s, %s)", field, pattern)
-	case ClickHouse:
-		// ClickHouse uses match(field, pattern)
+	case ClickHouseVariant:
 		return fmt.Sprintf("match(%s, %s)", field, pattern)
-	case MsSqlServer:
-		// SQL Server doesn't have native REGEXP; uses LIKE
+	case MsSqlServerVariant:
 		return fmt.Sprintf("%s LIKE %s", field, pattern)
-	case MySql, SQLite:
-		// MySQL and SQLite use REGEXP operator
+	case MySqlVariant, SQLiteVariant:
 		return fmt.Sprintf("%s REGEXP %s", field, pattern)
 	default:
 		return fmt.Sprintf("%s REGEXP %s", field, pattern)
 	}
 }
 
-// FormatPlaceholder constructs a SQL parameter placeholder based on the variant and parameter order.
-func FormatPlaceholder(cfg SqlConfig, order int) string {
-	switch cfg.Name {
-	case MySql, SQLite, ClickHouse:
-		if cfg.SqlParamChar == '?' {
-			return "?"
-		}
-		return fmt.Sprintf("%c%d", cfg.SqlParamChar, order)
-	case MsSqlServer:
-		if cfg.SqlParamChar == '@' {
-			return fmt.Sprintf("@p%d", order)
-		}
-		return fmt.Sprintf("%c%d", cfg.SqlParamChar, order)
-	case Oracle:
-		return fmt.Sprintf(":%d", order)
-	case Postgres, CockroachDB:
-		return fmt.Sprintf("$%d", order)
-	default:
-		if cfg.SqlParamChar == '?' {
-			return "?"
-		}
-		if cfg.SqlParamChar != 0 {
-			return fmt.Sprintf("%c%d", cfg.SqlParamChar, order)
-		}
-		return fmt.Sprintf("$%d", order)
-	}
-}
-
+// Counts the segment count in a given path.
 func pathSegCount(path string) int {
 	return len(strings.Split(path, "."))
 }
 
+// Get the last two segments of a given path and returns them.
+//
+// eg:
+//
+//	"order.customer.id" => "customer", "id"
 func pathEntityAndField(path string) (string, string) {
-
 	pathSeg := strings.Split(path, ".")
-
 	if len(pathSeg) == 1 {
 		return "", path
 	}
-
 	return pathSeg[len(pathSeg)-2], pathSeg[len(pathSeg)-1]
-
 }
 
+// Split the path into two parts by the last part such that all segments
+// except last one is considered a single segment called entities and last segment
+// as field.
+//
+// eg:
+//
+//	"order.customer.id" => "order.customer", "id"
 func pathEntitiesAndField(path string) (string, string) {
 	segCount := strings.Count(path, ".")
-
 	if segCount <= 1 {
 		return "", path
 	}
-
 	lastDotIndex := strings.LastIndex(path, ".")
 	return path[:lastDotIndex], path[lastDotIndex+1:]
 }

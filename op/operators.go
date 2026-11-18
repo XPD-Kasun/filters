@@ -1,5 +1,5 @@
-//go:build dev
-
+// op package defines the supported operators that are represented by the
+// main API
 package op
 
 type Operator string
@@ -14,8 +14,8 @@ const (
 	Lte     Operator        = "<="
 	And     LogicalOperator = "&"
 	Or      LogicalOperator = "|"
-	Not     LogicalOperator = "!"
-	Like    Operator        = "LIKE "
-	In      Operator        = "IN "
-	Between Operator        = "BETWEEN "
+	Not     Operator        = "NOT"
+	Like    Operator        = "LIKE"
+	In      Operator        = "IN"
+	Between Operator        = "BETWEEN"
 )

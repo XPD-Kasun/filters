@@ -70,4 +70,15 @@ func TestExtractEntities(t *testing.T) {
 	if !reflect.DeepEqual(entities, expectedComplex) {
 		t.Errorf("got %v, want %v", entities, expectedComplex)
 	}
+
+	// 6. Not filter
+	notFilter := f.Not(f.Eq("user.profile.age", 30))
+	notEntities, err := f.ExtractEntities(notFilter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedNot := []string{"user", "profile"}
+	if !reflect.DeepEqual(notEntities, expectedNot) {
+		t.Errorf("got %v, want %v", notEntities, expectedNot)
+	}
 }

@@ -1,3 +1,5 @@
+// sqlfilter package contains the components that consumes the given filter and
+// converts it into a SQL representation. See [SqlFilter] for more information.
 package sqlfilter
 
 import (
@@ -9,35 +11,41 @@ import (
 	"github.com/XPD-Kasun/filters/op"
 )
 
+// SqlFilter implements [filters.Visitor] and translates a filter to SQL syntax.
+// Currently, supports following SQL dialects:
+//   - MSSqlServer (T-SQL)
+//   - Oracle (pl/SQL)
+//   - Postgres
+//   - CocroachDB
+//   - MySql
+//   - Clickhouse
 type SqlFilter struct {
-	sqlConfig    SqlConfig
-	sqlParamChar rune
-	buf          *strings.Builder
-	args         []any
-	paramOrder   int
-	usesCaching  bool
-	cmdCache     map[filters.Filter]string
-	meta         map[string]string
+	sqlConfig  SqlConfig
+	buf        *strings.Builder
+	args       []any
+	paramOrder int
+	cmdCache   map[filters.Filter]string
+	meta       map[string]string
 }
 
 var _ filters.Visitor = &SqlFilter{}
 
+// SqlVariant identifies a SQL dialect
 type SqlVariant string
 
 const (
-	Postgres    SqlVariant = "Postgres"
-	CockroachDB SqlVariant = "CockroachDB"
-	Oracle      SqlVariant = "Oracle"
-	MsSqlServer SqlVariant = "MsSqlServer"
-	MySql       SqlVariant = "MySql"
-	SQLite      SqlVariant = "SQLite"
-	ClickHouse  SqlVariant = "ClickHouse"
+	PostgresVariant    SqlVariant = "Postgres"
+	CockroachDBVariant SqlVariant = "CockroachDB"
+	OracleVariant      SqlVariant = "Oracle"
+	MsSqlServerVariant SqlVariant = "MsSqlServer"
+	MySqlVariant       SqlVariant = "MySql"
+	SQLiteVariant      SqlVariant = "SQLite"
+	ClickHouseVariant  SqlVariant = "ClickHouse"
 )
 
 var opLogicalMap = map[op.LogicalOperator]string{
 	op.And: "and",
 	op.Or:  "or",
-	op.Not: "not",
 }
 
 var opMap = map[op.Operator]string{
@@ -50,43 +58,81 @@ var opMap = map[op.Operator]string{
 	op.In:      "IN",
 	op.Like:    "LIKE",
 	op.Nq:      "!=",
+	op.Not:     "NOT",
 }
 
-// formatField applies entity/field segment mapping and dialect-specific identifier quoting.
-func (v *SqlFilter) formatField(field string) string {
-	mapped := v.mapEntityFieldNames(field)
-	return QuoteIdentifier(v.sqlConfig, mapped)
+type callOptions struct {
+	startAt int // first paramOrder value (default 1)
 }
 
-func (v *SqlFilter) mapEntityFieldNames(pathField string) string {
-	if len(v.sqlConfig.fields) == 0 {
-		return pathField
-	}
-	entities := strings.Split(pathField, ".")
-	mappedPath := make([]string, len(entities))
+// CallOption is a functional option for New and NewEmpty.
+type CallOption func(*callOptions)
 
-	for i, entity := range entities {
-		normalisedEntity := entity
-		if !v.sqlConfig.CaseSensitive {
-			normalisedEntity = strings.ToLower(entity)
+// StartAt offsets parameter numbering so it begins at the given value.
+// Use when combining multiple SqlFilter outputs into one query.
+//
+//	sqlfilter.New(cfg, filter, sqlfilter.StartAt(4))
+func StartAt(n int) CallOption {
+	return func(o *callOptions) { o.startAt = n }
+}
+
+// formatField maps segment names using the field alias map, then applies
+// the dialect specific identifier quoting style to each segment.
+func (v *SqlFilter) formatField(field string) (string, error) {
+	segments := strings.Split(field, ".")
+	out := make([]string, len(segments))
+
+	open, close := quoteStyleChars(v.sqlConfig.quoteStyle)
+	policy := v.sqlConfig.quotePolicy
+
+	for i, seg := range segments {
+		// lookup alias
+		if mapped, ok := v.sqlConfig.fieldsLookup(seg); ok {
+			seg = mapped
 		}
 
-		if val, hasEntity := v.sqlConfig.fields[normalisedEntity]; hasEntity {
-			mappedPath[i] = val
-		} else {
-			mappedPath[i] = entity
+		if v.sqlConfig.IdentMaxLen > 0 && len(seg) > v.sqlConfig.IdentMaxLen {
+			return "", fmt.Errorf(
+				"%w: identifier %q exceeds dialect limit of %d bytes",
+				filters.ErrUnsupported, seg, v.sqlConfig.IdentMaxLen,
+			)
 		}
+
+		if policy == QuoteNever {
+			out[i] = seg
+			continue
+		}
+
+		// QuoteAlways — quote this segment.
+		// Reject null bytes for all dialects.
+		if strings.ContainsRune(seg, 0) {
+			return "", fmt.Errorf(
+				"%w: identifier %q contains a null byte, which is not allowed",
+				filters.ErrUnsupported, seg,
+			)
+		}
+		// Oracle: reject double-quote inside a double-quoted identifier.
+		if v.sqlConfig.Name == OracleVariant && close == '"' && strings.ContainsRune(seg, '"') {
+			return "", fmt.Errorf(
+				"%w: Oracle does not allow double-quotes inside a quoted identifier: %q",
+				filters.ErrUnsupported, seg,
+			)
+		}
+
+		// Escape the closing character by doubling it.
+		escaped := strings.ReplaceAll(seg, string(close), string(close)+string(close))
+		out[i] = string(open) + escaped + string(close)
 	}
 
-	return strings.Join(mappedPath, ".")
+	return strings.Join(out, "."), nil
 }
 
-// VisitComparison implements [filters.Visitor].
-func (v *SqlFilter) VisitComparison(op filters.CompareFilter) error {
-	if op.Value == nil {
-		return v.compareNull(op.Field, op.Op)
+// VisitComparison generates a where clause that satisfies the comparison filter
+func (v *SqlFilter) VisitComparison(cmp filters.CompareFilter) error {
+	if cmp.Value == nil {
+		return v.compareNull(cmp.Field, cmp.Op)
 	}
-	return v.comparison(op.Field, opMap[op.Op], op.Value)
+	return v.comparison(cmp.Field, opMap[cmp.Op], cmp.Value)
 }
 
 func (v *SqlFilter) compareNull(field string, operator op.Operator) error {
@@ -99,10 +145,13 @@ func (v *SqlFilter) compareNull(field string, operator op.Operator) error {
 	case op.Nq:
 		nullstr = " IS NOT NULL"
 	default:
-		return fmt.Errorf("SqlFilter: operator %v is not compatible with nil", operator)
+		return fmt.Errorf("%w: operator %v is not compatible with nil", filters.ErrUnsupported, operator)
 	}
 
-	formattedField := v.formatField(field)
+	formattedField, err := v.formatField(field)
+	if err != nil {
+		return err
+	}
 	if v.sqlConfig.Logger != nil {
 		v.sqlConfig.Logger.Debug("sqlfilter: visiting null comparison", "field", formattedField, "operator", nullstr)
 	}
@@ -112,7 +161,28 @@ func (v *SqlFilter) compareNull(field string, operator op.Operator) error {
 	return nil
 }
 
-// VisitLogical implements [filters.Visitor].
+// VisitNot generates a SQL syntax that satisfies the Not filter
+func (v *SqlFilter) VisitNot(l filters.NotFilter) error {
+	if filters.IsEmpty(l.Child) {
+		return nil
+	}
+	w := v.buf
+
+	w.WriteString("NOT(")
+	if err := l.Child.Accept(v); err != nil {
+		return err
+	}
+	w.WriteString(")")
+
+	return nil
+}
+
+// VisitNot generates SQL that satisfies the given [filters.LogicalFilter]
+// which filters using AND and OR operators.
+//
+// eg:
+//
+//	(FilterA AND FilterB) OR FilterC
 func (v *SqlFilter) VisitLogical(l filters.LogicalFilter) error {
 	w := v.buf
 
@@ -120,40 +190,33 @@ func (v *SqlFilter) VisitLogical(l filters.LogicalFilter) error {
 		v.sqlConfig.Logger.Debug("sqlfilter: visiting logical filter", "operator", opLogicalMap[l.Op], "childrenCount", len(l.Children))
 	}
 
-	switch l.Op {
-	case op.And, op.Or:
-		w.WriteString("(")
-		for i, a := range l.Children {
-			if err := a.Accept(v); err != nil {
-				return err
-			}
-			if i != len(l.Children)-1 {
-				w.WriteString(" ")
-				w.WriteString(opLogicalMap[l.Op])
-				w.WriteString(" ")
-			}
+	w.WriteString("(")
+	for i, a := range l.Children {
+		if err := a.Accept(v); err != nil {
+			return err
 		}
-		w.WriteString(")")
-
-	case op.Not:
-		if len(l.Children) == 1 {
-			w.WriteString("NOT(")
-			if err := l.Children[0].Accept(v); err != nil {
-				return err
-			}
-			w.WriteString(")")
-		} else {
-			return errors.New("NOT operator can only have a single child")
+		if i != len(l.Children)-1 {
+			w.WriteString(" ")
+			w.WriteString(opLogicalMap[l.Op])
+			w.WriteString(" ")
 		}
 	}
+	w.WriteString(")")
 
 	return nil
 }
 
-// VisitBetween implements filters.Visitor.
+// VisitBetween generates SQL for [filters.BetweenFilter].
+//
+// eg:
+//
+//	fieldA between valueA and valueB
 func (v *SqlFilter) VisitBetween(a filters.BetweenFilter) error {
 	w := v.buf
-	formattedField := v.formatField(a.Field)
+	formattedField, err := v.formatField(a.Field)
+	if err != nil {
+		return err
+	}
 
 	if v.sqlConfig.Logger != nil {
 		v.sqlConfig.Logger.Debug("sqlfilter: visiting between filter", "field", formattedField, "from", a.From, "to", a.To)
@@ -162,10 +225,10 @@ func (v *SqlFilter) VisitBetween(a filters.BetweenFilter) error {
 	w.WriteString(formattedField)
 	w.WriteString(" BETWEEN ")
 	v.paramOrder++
-	w.WriteString(FormatPlaceholder(v.sqlConfig, v.paramOrder))
+	w.WriteString(v.sqlConfig.Placeholder(v.paramOrder))
 	w.WriteString(" and ")
 	v.paramOrder++
-	w.WriteString(FormatPlaceholder(v.sqlConfig, v.paramOrder))
+	w.WriteString(v.sqlConfig.Placeholder(v.paramOrder))
 
 	v.args = append(v.args, a.From, a.To)
 	return nil
@@ -173,7 +236,10 @@ func (v *SqlFilter) VisitBetween(a filters.BetweenFilter) error {
 
 func (v *SqlFilter) comparison(field string, operator string, val any) error {
 	w := v.buf
-	formattedField := v.formatField(field)
+	formattedField, err := v.formatField(field)
+	if err != nil {
+		return err
+	}
 
 	if v.sqlConfig.Logger != nil {
 		v.sqlConfig.Logger.Debug("sqlfilter: visiting comparison", "field", formattedField, "operator", operator, "value", val)
@@ -185,36 +251,50 @@ func (v *SqlFilter) comparison(field string, operator string, val any) error {
 	w.WriteRune(' ')
 
 	v.paramOrder++
-	w.WriteString(FormatPlaceholder(v.sqlConfig, v.paramOrder))
+	w.WriteString(v.sqlConfig.Placeholder(v.paramOrder))
 	v.args = append(v.args, val)
 	return nil
 }
 
+// Returns the SQL parameter arguments as an array for the generated placeholders.
+// This array contains the provided values as is and can be passed to the driver directly.
+//
+// Note that the ordering of parameters are specific to the given filter and should not be used
+// over multiple filters. In that case, use [StartAt] to specify the parameter numbering start
+// value when using multiple filters in the same query.
 func (v *SqlFilter) Args() []any {
 	return v.args
 }
 
+// Returns the [SqlConfig] for this SqlFilter.
 func (v *SqlFilter) Config() SqlConfig {
 	return v.sqlConfig
 }
 
-// VisitIn implements filters.Visitor.
-func (v *SqlFilter) VisitIn(op filters.InFilter) error {
-	if len(op.Values) == 0 {
+// VisitIn generates SQL for [filters.InFilter].
+//
+// eg:
+//
+//	fieldA IN (valueA, valueB, valueC)
+func (v *SqlFilter) VisitIn(inF filters.InFilter) error {
+	if len(inF.Values) == 0 {
 		return errors.New("sqlfilter: IN clause cannot have empty values")
 	}
 
 	w := v.buf
-	formattedField := v.formatField(op.Field)
-
-	if v.sqlConfig.Logger != nil {
-		v.sqlConfig.Logger.Debug("sqlfilter: visiting in filter", "field", formattedField, "valuesCount", len(op.Values))
+	formattedField, err := v.formatField(inF.Field)
+	if err != nil {
+		return err
 	}
 
-	s := make([]string, len(op.Values))
-	for i, val := range op.Values {
+	if v.sqlConfig.Logger != nil {
+		v.sqlConfig.Logger.Debug("sqlfilter: visiting in filter", "field", formattedField, "valuesCount", len(inF.Values))
+	}
+
+	s := make([]string, len(inF.Values))
+	for i, val := range inF.Values {
 		v.paramOrder++
-		s[i] = FormatPlaceholder(v.sqlConfig, v.paramOrder)
+		s[i] = v.sqlConfig.Placeholder(v.paramOrder)
 		v.args = append(v.args, val)
 	}
 
@@ -226,67 +306,90 @@ func (v *SqlFilter) VisitIn(op filters.InFilter) error {
 	return nil
 }
 
-// VisitLike implements filters.Visitor.
-func (v *SqlFilter) VisitLike(op filters.LikeFilter) error {
+// VisitLike generates SQL for [filters.LikeFilter].
+// If the [filters.LikeFilter.Method] is set to empty string,
+// standard SQL Like operator syntax is used. And [filters.LikeFilter.Value]
+// expected to contain SQL like syntax. If the Mehthod is "regex", then
+// value is considered to be a regex and generates SQL using the syntax
+// for the given dialect.
+//
+// eg:
+//
+//	fieldA like '%ID_3%'
+//	email !~* '\.org$'
+func (v *SqlFilter) VisitLike(likeF filters.LikeFilter) error {
 	w := v.buf
-	formattedField := v.formatField(op.Field)
+	formattedField, err := v.formatField(likeF.Field)
+	if err != nil {
+		return err
+	}
 
 	// regular like semantics
-	if op.Method == "" {
+	if likeF.Method == "" {
 		v.paramOrder++
-		placeholder := FormatPlaceholder(v.sqlConfig, v.paramOrder)
+		placeholder := v.sqlConfig.Placeholder(v.paramOrder)
 
 		if v.sqlConfig.Logger != nil {
-			v.sqlConfig.Logger.Debug("sqlfilter: visiting like filter", "field", formattedField, "pattern", op.Value, "placeholder", placeholder)
+			v.sqlConfig.Logger.Debug("sqlfilter: visiting like filter", "field", formattedField, "pattern", likeF.Value, "placeholder", placeholder)
 		}
 
 		w.WriteString(formattedField)
 		w.WriteString(" LIKE ")
 		w.WriteString(placeholder)
 
-		v.args = append(v.args, op.Value)
+		v.args = append(v.args, likeF.Value)
 		return nil
 	}
 
 	// regex support in sql
-	if op.Method == "regex" {
+	if likeF.Method == "regex" {
 		v.paramOrder++
-		placeholder := FormatPlaceholder(v.sqlConfig, v.paramOrder)
+		placeholder := v.sqlConfig.Placeholder(v.paramOrder)
 
 		if v.sqlConfig.Logger != nil {
-			v.sqlConfig.Logger.Debug("sqlfilter: visiting regex filter", "field", formattedField, "pattern", op.Value, "placeholder", placeholder)
+			v.sqlConfig.Logger.Debug("sqlfilter: visiting regex filter", "field", formattedField, "pattern", likeF.Value, "placeholder", placeholder)
 		}
 
 		w.WriteString(FormatRegex(v.sqlConfig.Name, formattedField, placeholder))
-		v.args = append(v.args, op.Value)
+		v.args = append(v.args, likeF.Value)
 		return nil
 	}
 
-	return fmt.Errorf("sqlfilter: unsupported LIKE method %q", op.Method)
+	return fmt.Errorf("%w: LIKE method %q", filters.ErrUnsupported, likeF.Method)
 }
 
+// Returns the generated SQL for this filter. Implements [fmt.Stringer] interface.
 func (v *SqlFilter) String() string {
 	return v.Sql()
 }
 
+// Returns the generated SQL for this filter.
 func (v *SqlFilter) Sql() string {
 	return v.buf.String()
 }
 
-func NewEmpty(sqlConfig SqlConfig) *SqlFilter {
-	if sqlConfig.Name == "" && sqlConfig.SqlParamChar == 0 {
-		sqlConfig = PostgresConfig
+// NewEmpty creates an empty SqlFilter visitor with the given config.
+// Optional CallOption values (eg. StartAt) can be provided.
+func NewEmpty(sqlConfig SqlConfig, opts ...CallOption) *SqlFilter {
+	if sqlConfig.Name == "" && sqlConfig.Placeholder == nil {
+		sqlConfig = UsePostgres()
+	}
+	o := callOptions{startAt: 0}
+	for _, opt := range opts {
+		opt(&o)
 	}
 	return &SqlFilter{
-		cmdCache:     map[filters.Filter]string{},
-		buf:          &strings.Builder{},
-		sqlConfig:    sqlConfig,
-		sqlParamChar: sqlConfig.SqlParamChar,
+		cmdCache:   map[filters.Filter]string{},
+		buf:        &strings.Builder{},
+		sqlConfig:  sqlConfig,
+		paramOrder: o.startAt,
 	}
 }
 
-func New(sqlConfig SqlConfig, f filters.Filter) (*SqlFilter, error) {
-	sf := NewEmpty(sqlConfig)
+// New compiles the given filter into SQL using the provided config.
+// Optional CallOption values (eg. StartAt) can be provided.
+func New(sqlConfig SqlConfig, f filters.Filter, opts ...CallOption) (*SqlFilter, error) {
+	sf := NewEmpty(sqlConfig, opts...)
 
 	if sf.sqlConfig.Logger != nil {
 		sf.sqlConfig.Logger.Info("sqlfilter: compiling filter to SQL", "variant", sf.sqlConfig.Name)
