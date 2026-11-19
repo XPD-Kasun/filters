@@ -54,7 +54,7 @@ func TestExtractEntities(t *testing.T) {
 		f.Eq("order.customer.price", 200),
 		f.Between("order.item.quantity", 1, 10),
 		f.In("customer.status", "active", "vip"),
-		f.Like("warehouse.location.code", "US-%", ""),
+		f.StringMatch("warehouse.location.code", "US-%", f.WildcardMatch),
 		f.Or(
 			f.Eq("order.id", 55),
 			f.Eq("customer.email", "test@example.com"),

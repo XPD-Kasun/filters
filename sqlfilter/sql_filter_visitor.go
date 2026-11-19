@@ -30,6 +30,93 @@ type SqlFilter struct {
 
 var _ filters.Visitor = &SqlFilter{}
 
+// VisitStringMatch implements [filters.Visitor].
+func (v *SqlFilter) VisitStringMatch(sm filters.StringMatchFilter) error {
+	switch sm.Method {
+	case filters.StartsWith:
+		return v.strMatchStartsWith(sm)
+	case filters.EndsWith:
+		return v.strMatchEndsWith(sm)
+	case filters.Contains:
+		return v.strMatchContains(sm)
+	case filters.Regex:
+		return v.strMatchRegex(sm)
+	case filters.WildcardMatch:
+		return v.strMatchWildcard(sm)
+	}
+	return fmt.Errorf(
+		"%w: Unknown string match type %q", filters.ErrUnsupported, sm.Method,
+	)
+}
+
+// doStringMatch is the shared entry point for all strMatchXxx methods.
+// It formats the field, calls fn against the configured StringMatchDialect,
+// and writes the resulting SQL fragment and args via writeStringMatch.
+func (v *SqlFilter) doStringMatch(
+	sm filters.StringMatchFilter,
+	fn func(StringMatchDialect, string) (string, []any, error),
+) error {
+	smDialect := v.sqlConfig.StringMatch
+	if smDialect == nil {
+		smDialect = defaultStringMatch(v.sqlConfig.Name, v.sqlConfig.LikeEscape)
+	}
+	formattedField, err := v.formatField(sm.Field)
+	if err != nil {
+		return err
+	}
+	if v.sqlConfig.Logger != nil {
+		v.sqlConfig.Logger.Debug("sqlfilter: visiting string match",
+			"field", formattedField, "method", sm.Method, "caseSensitive", sm.CaseSensitive)
+	}
+	sql, args, err := fn(smDialect, formattedField)
+	if err != nil {
+		return err
+	}
+	return v.writeStringMatch(sql, args)
+}
+
+// writeStringMatch replaces each "?" placeholder token in sql with the actual
+// dialect placeholder (e.g. $1, :1, @p1), appends the args, and writes the
+// final SQL fragment to the output buffer.
+func (v *SqlFilter) writeStringMatch(sql string, args []any) error {
+	for _, arg := range args {
+		v.paramOrder++
+		sql = strings.Replace(sql, "?", v.sqlConfig.Placeholder(v.paramOrder), 1)
+		v.args = append(v.args, arg)
+	}
+	v.buf.WriteString(sql)
+	return nil
+}
+
+func (v *SqlFilter) strMatchWildcard(sm filters.StringMatchFilter) error {
+	return v.doStringMatch(sm, func(d StringMatchDialect, field string) (string, []any, error) {
+		return d.Like(field, sm.Value, !sm.CaseSensitive)
+	})
+}
+
+func (v *SqlFilter) strMatchRegex(sm filters.StringMatchFilter) error {
+	return v.doStringMatch(sm, func(d StringMatchDialect, field string) (string, []any, error) {
+		return d.Regex(field, sm.Value, !sm.CaseSensitive)
+	})
+}
+
+func (v *SqlFilter) strMatchContains(sm filters.StringMatchFilter) error {
+	return v.doStringMatch(sm, func(d StringMatchDialect, field string) (string, []any, error) {
+		return d.Contains(field, sm.Value, !sm.CaseSensitive)
+	})
+}
+
+func (v *SqlFilter) strMatchEndsWith(sm filters.StringMatchFilter) error {
+	return v.doStringMatch(sm, func(d StringMatchDialect, field string) (string, []any, error) {
+		return d.EndsWith(field, sm.Value, !sm.CaseSensitive)
+	})
+}
+
+func (v *SqlFilter) strMatchStartsWith(sm filters.StringMatchFilter) error {
+	return v.doStringMatch(sm, func(d StringMatchDialect, field string) (string, []any, error) {
+		return d.StartsWith(field, sm.Value, !sm.CaseSensitive)
+	})
+}
 // SqlVariant identifies a SQL dialect
 type SqlVariant string
 
@@ -304,58 +391,6 @@ func (v *SqlFilter) VisitIn(inF filters.InFilter) error {
 	w.WriteString(")")
 
 	return nil
-}
-
-// VisitLike generates SQL for [filters.LikeFilter].
-// If the [filters.LikeFilter.Method] is set to empty string,
-// standard SQL Like operator syntax is used. And [filters.LikeFilter.Value]
-// expected to contain SQL like syntax. If the Mehthod is "regex", then
-// value is considered to be a regex and generates SQL using the syntax
-// for the given dialect.
-//
-// eg:
-//
-//	fieldA like '%ID_3%'
-//	email !~* '\.org$'
-func (v *SqlFilter) VisitLike(likeF filters.LikeFilter) error {
-	w := v.buf
-	formattedField, err := v.formatField(likeF.Field)
-	if err != nil {
-		return err
-	}
-
-	// regular like semantics
-	if likeF.Method == "" {
-		v.paramOrder++
-		placeholder := v.sqlConfig.Placeholder(v.paramOrder)
-
-		if v.sqlConfig.Logger != nil {
-			v.sqlConfig.Logger.Debug("sqlfilter: visiting like filter", "field", formattedField, "pattern", likeF.Value, "placeholder", placeholder)
-		}
-
-		w.WriteString(formattedField)
-		w.WriteString(" LIKE ")
-		w.WriteString(placeholder)
-
-		v.args = append(v.args, likeF.Value)
-		return nil
-	}
-
-	// regex support in sql
-	if likeF.Method == "regex" {
-		v.paramOrder++
-		placeholder := v.sqlConfig.Placeholder(v.paramOrder)
-
-		if v.sqlConfig.Logger != nil {
-			v.sqlConfig.Logger.Debug("sqlfilter: visiting regex filter", "field", formattedField, "pattern", likeF.Value, "placeholder", placeholder)
-		}
-
-		w.WriteString(FormatRegex(v.sqlConfig.Name, formattedField, placeholder))
-		v.args = append(v.args, likeF.Value)
-		return nil
-	}
-
-	return fmt.Errorf("%w: LIKE method %q", filters.ErrUnsupported, likeF.Method)
 }
 
 // Returns the generated SQL for this filter. Implements [fmt.Stringer] interface.

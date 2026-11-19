@@ -20,7 +20,7 @@ type MetaFilter interface {
 type Visitor interface {
 	VisitLogical(LogicalFilter) error
 	VisitComparison(CompareFilter) error
-	VisitLike(LikeFilter) error
+	VisitStringMatch(StringMatchFilter) error
 	VisitBetween(BetweenFilter) error
 	VisitIn(InFilter) error
 	VisitNot(NotFilter) error

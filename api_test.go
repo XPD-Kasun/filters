@@ -141,7 +141,7 @@ func TestRegexDialects(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			filter := f.Like("username", "^admin.*", "regex")
+			filter := f.StringMatch("username", "^admin.*", f.Regex, true)
 			sf, err := sqlfilter.New(tt.cfg, filter)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -313,7 +313,7 @@ func TestEntityFieldMapping(t *testing.T) {
 	complexFilter := f.And(
 		f.Between("order.customer.price", 100, 500),
 		f.In("order.customer.status", "active", "vip"),
-		f.Like("order.customer.name", "Smith%", ""),
+		f.StringMatch("order.customer.name", "Smith%", f.WildcardMatch, true),
 		f.Eq("order.customer.deleted_at", nil),
 	)
 	sf3, err := sqlfilter.New(cfgQuoted, complexFilter)
@@ -458,11 +458,11 @@ func TestNilChildrenAndEmptyFilter(t *testing.T) {
 // TestErrUnsupportedSentinel verifies that unsupported operations return
 // an error wrapping filters.ErrUnsupported.
 func TestErrUnsupportedSentinel(t *testing.T) {
-	// 1. Unsupported LIKE method
-	filterLike := f.Like("name", "foo", "custom_unknown")
-	_, err := sqlfilter.New(sqlfilter.UsePostgres(), filterLike)
+	// 1. Unsupported StringMatch method
+	filterUnknown := f.StringMatch("name", "foo", f.StringMatchMethod("custom_unknown"))
+	_, err := sqlfilter.New(sqlfilter.UsePostgres(), filterUnknown)
 	if !errors.Is(err, f.ErrUnsupported) {
-		t.Errorf("expected ErrUnsupported for unknown LIKE method, got %v", err)
+		t.Errorf("expected ErrUnsupported for unknown StringMatch method, got %v", err)
 	}
 
 	// 2. Unsupported operator with nil (e.g. Gt with nil)

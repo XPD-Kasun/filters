@@ -54,8 +54,8 @@ func (v *EntityVisitor) VisitComparison(op CompareFilter) error {
 	return nil
 }
 
-// VisitLike implements [Visitor].
-func (v *EntityVisitor) VisitLike(op LikeFilter) error {
+// VisitStringMatch implements [Visitor].
+func (v *EntityVisitor) VisitStringMatch(op StringMatchFilter) error {
 	v.addFromField(op.Field)
 	return nil
 }

@@ -8,15 +8,25 @@ import (
 
 // Defines core filter implementations.
 
-type LikeFilter struct {
+type StringMatchMethod string
+
+const (
+	Contains      StringMatchMethod = "Contains"
+	StartsWith    StringMatchMethod = "StartsWith"
+	EndsWith      StringMatchMethod = "EndsWith"
+	WildcardMatch StringMatchMethod = "WildcardMatch"
+	Regex         StringMatchMethod = "Regex"
+)
+
+type StringMatchFilter struct {
 	Field         string
 	Value         string
-	Method        string
+	Method        StringMatchMethod
 	CaseSensitive bool
 }
 
-func (op LikeFilter) Accept(v Visitor) error {
-	return v.VisitLike(op)
+func (sm StringMatchFilter) Accept(v Visitor) error {
+	return v.VisitStringMatch(sm)
 }
 
 type InFilter struct {

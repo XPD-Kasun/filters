@@ -127,6 +127,12 @@ type SqlConfig struct {
 	// LIKE escape character. 0 means no ESCAPE clause is emitted.
 	LikeEscape rune
 
+	// StringMatch is the dialect-specific implementation for string matching
+	// operations (Contains, StartsWith, EndsWith, Like, Regex).
+	// All built-in UseXxx() presets populate this automatically.
+	// Custom configs may use WithStringMatch to supply their own implementation.
+	StringMatch StringMatchDialect
+
 	// When true, booleans are rendered as 1 or 0, instead of TRUE or FALSE.
 	NumericBooleans bool
 
@@ -175,6 +181,14 @@ func (c SqlConfig) WithLogger(logger *slog.Logger) SqlConfig {
 	return c
 }
 
+// WithStringMatch returns a copy of the SqlConfig with the given [StringMatchDialect].
+// Use this to supply a custom string-matching implementation for a dialect
+// not covered by the built-in presets.
+func (c SqlConfig) WithStringMatch(d StringMatchDialect) SqlConfig {
+	c.StringMatch = d
+	return c
+}
+
 // GetQuoteStyle returns the QuoteStyle for this config.
 func (c SqlConfig) GetQuoteStyle() QuoteStyle {
 	return c.quoteStyle
@@ -200,6 +214,7 @@ func UsePostgres() SqlConfig {
 		IdentMaxLen: 63,
 		ParamLimit:  65535,
 		LikeEscape:  '\\',
+		StringMatch: PostgresStringMatch{Escape: '\\'},
 	}
 }
 
@@ -213,6 +228,7 @@ func UseCockroachDB() SqlConfig {
 		IdentMaxLen: 63,
 		ParamLimit:  65535,
 		LikeEscape:  '\\',
+		StringMatch: PostgresStringMatch{Escape: '\\'},
 	}
 }
 
@@ -231,6 +247,7 @@ func UseMySQL() SqlConfig {
 		IdentMaxLen: 64,
 		ParamLimit:  65535,
 		LikeEscape:  '\\', // MySQL treats \ specially; callers may override.
+		StringMatch: MySQLStringMatch{Escape: '\\'},
 	}
 }
 
@@ -244,6 +261,7 @@ func UseClickHouse() SqlConfig {
 		IdentMaxLen: 0,
 		ParamLimit:  0,
 		LikeEscape:  '\\',
+		StringMatch: ClickHouseStringMatch{Escape: '\\'},
 	}
 }
 
@@ -257,6 +275,7 @@ func UseSQLite() SqlConfig {
 		IdentMaxLen: 0,
 		ParamLimit:  0,
 		LikeEscape:  '\\',
+		StringMatch: SQLiteStringMatch{Escape: '\\'},
 	}
 }
 
@@ -276,6 +295,7 @@ func UseMsSqlServer() SqlConfig {
 		ParamLimit:      2100,
 		NumericBooleans: true,
 		LikeEscape:      '\\',
+		StringMatch:     MsSqlServerStringMatch{Escape: '\\'},
 	}
 }
 
@@ -295,6 +315,7 @@ func UseOracle() SqlConfig {
 		ParamLimit:      0,
 		NumericBooleans: true,
 		LikeEscape:      '\\',
+		StringMatch:     OracleStringMatch{Escape: '\\'},
 	}
 }
 

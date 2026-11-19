@@ -93,17 +93,19 @@ func Not(expr Filter) Filter {
 	return f
 }
 
-// Returns a [filters.Filter] that checks the given field satisfies the value using
-// given method. Method can have following:
-//  - "" - sql like wildcard matching.
-//  - "regex" - regular expression matching.
-func Like(field string, value string, method ...string) Filter {
-	var m string = ""
-	if len(method) > 0 {
-		m = method[0]
+// StringMatch creates a [filters.Filter] that matches a string field using the specified method.
+// By default, matching is case-insensitive unless caseSensitive is set to true.
+func StringMatch(field string, value string, method StringMatchMethod, caseSensitive ...bool) Filter {
+	cs := false
+	if len(caseSensitive) > 0 {
+		cs = caseSensitive[0]
 	}
-	f := LikeFilter{Field: field, Value: value, Method: m}
-	return f
+	return StringMatchFilter{
+		Field:         field,
+		Value:         value,
+		Method:        method,
+		CaseSensitive: cs,
+	}
 }
 
 // Returns a [filters.Filter] that checks the given field is equal to
