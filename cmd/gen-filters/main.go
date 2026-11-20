@@ -5,9 +5,11 @@ import (
 	"os"
 	"runtime"
 	"strings"
+
+	"github.com/XPD-Kasun/filters"
 )
 
-var Version = "0.1.0"
+var Version = filters.VERSION_0_9_0
 
 func main() {
 	args := os.Args[1:]

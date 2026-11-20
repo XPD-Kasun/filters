@@ -217,6 +217,7 @@ func (g *Generator) writePackage() {
 	v.WriteString(g.ctx.pkg)
 	v.WriteString("\n\n")
 	v.WriteString("import(\n\t\"github.com/XPD-Kasun/filters/fields\"")
+	v.WriteString("\n\tf \"github.com/XPD-Kasun/filters\"")
 	for k := range g.imports {
 		i := strings.IndexRune(k, '.')
 		if i > -1 {
@@ -225,7 +226,12 @@ func (g *Generator) writePackage() {
 			v.WriteRune('"')
 		}
 	}
-	v.WriteString("\n)\n\n")
+	v.WriteString("\n)\n")
+	v.WriteString("var GenVersion string = f.VERSION")
+	v.WriteString("_")
+	v.WriteString(strings.ReplaceAll(Version, ".", "_"))
+	v.WriteString("\n\n")
+
 }
 
 func (g *Generator) writeQueryStub() {

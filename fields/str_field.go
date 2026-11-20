@@ -7,36 +7,41 @@ type StringField[U any] struct {
 	Orderable[string, U]
 }
 
-// Returns a [filters.Filter] that checks whether this field's value
-// is similar to the given pattern. pattern format uses `sql_like` semantics.
-// Returns a [filters.Filter] that checks whether this field's value
-// is similar to the given pattern. pattern format uses sql_like semantics.
-func (sf StringField[U]) Like(pattern string) filters.Filter {
+// Returns a [filters.Filter] that checks whether this field
+// is similar to the given pattern. pattern format uses * and ? wildcard semantics
+// as in [filters.WildcardMatch].
+func (sf StringField[U]) Wildcard(pattern string) filters.Filter {
 	return filters.StringMatch(sf.getAliasName(), pattern, filters.WildcardMatch)
 }
 
-// Returns a [filters.Filter] that checks whether this field's value
+// Returns a [filters.Filter] that checks whether this field
 // contains the given substring.
 func (sf StringField[U]) Contains(value string) filters.Filter {
 	return filters.StringMatch(sf.getAliasName(), value, filters.Contains)
 }
 
-// Returns a [filters.Filter] that checks whether this field's value
+// Returns a [filters.Filter] that checks whether this field
 // starts with the given prefix.
 func (sf StringField[U]) StartsWith(value string) filters.Filter {
 	return filters.StringMatch(sf.getAliasName(), value, filters.StartsWith)
 }
 
-// Returns a [filters.Filter] that checks whether this field's value
+// Returns a [filters.Filter] that checks whether this field
 // ends with the given suffix.
 func (sf StringField[U]) EndsWith(value string) filters.Filter {
 	return filters.StringMatch(sf.getAliasName(), value, filters.EndsWith)
 }
 
-// Returns a [filters.Filter] that checks whether this field's value
+// Returns a [filters.Filter] that checks whether this field
 // is similar to the given regex pattern.
 func (sf StringField[U]) Regex(pattern string) filters.Filter {
 	return filters.StringMatch(sf.getAliasName(), pattern, filters.Regex)
+}
+
+// Returns a [filters.Filter] that checks whether this field
+// is same as the given value using case sensitive check.
+func (sf StringField[U]) StringEqual(value string) filters.Filter {
+	return filters.StringMatch(sf.getAliasName(), value, filters.StringEqual)
 }
 
 // Creates a new [StringField].
