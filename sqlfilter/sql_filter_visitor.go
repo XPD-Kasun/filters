@@ -43,10 +43,18 @@ func (v *SqlFilter) VisitStringMatch(sm filters.StringMatchFilter) error {
 		return v.strMatchRegex(sm)
 	case filters.WildcardMatch:
 		return v.strMatchWildcard(sm)
+	case filters.StringEqual:
+		return v.strMatchStringEqual(sm)
 	}
 	return fmt.Errorf(
 		"%w: Unknown string match type %q", filters.ErrUnsupported, sm.Method,
 	)
+}
+
+func (v *SqlFilter) strMatchStringEqual(sm filters.StringMatchFilter) error {
+	return v.doStringMatch(sm, func(d StringMatchDialect, field string) (string, []any, error) {
+		return d.StringEqual(field, sm.Value, !sm.CaseSensitive)
+	})
 }
 
 // doStringMatch is the shared entry point for all strMatchXxx methods.
@@ -117,6 +125,7 @@ func (v *SqlFilter) strMatchStartsWith(sm filters.StringMatchFilter) error {
 		return d.StartsWith(field, sm.Value, !sm.CaseSensitive)
 	})
 }
+
 // SqlVariant identifies a SQL dialect
 type SqlVariant string
 
@@ -218,6 +227,14 @@ func (v *SqlFilter) formatField(field string) (string, error) {
 func (v *SqlFilter) VisitComparison(cmp filters.CompareFilter) error {
 	if cmp.Value == nil {
 		return v.compareNull(cmp.Field, cmp.Op)
+	}
+	if s, ok := cmp.Value.(string); ok && cmp.Op == op.Eq {
+		return v.VisitStringMatch(filters.StringMatchFilter{
+			Field:         cmp.Field,
+			Method:        filters.StringEqual,
+			Value:         s,
+			CaseSensitive: v.sqlConfig.CaseSensitive,
+		})
 	}
 	return v.comparison(cmp.Field, opMap[cmp.Op], cmp.Value)
 }

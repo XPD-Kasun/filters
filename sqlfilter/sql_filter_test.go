@@ -178,6 +178,35 @@ func TestStringMatchDialects(t *testing.T) {
 			wantSql:  "LOWER(city) LIKE LOWER(?) ESCAPE '\\'",
 			wantArgs: []any{"%York%"},
 		},
+		// StringEqual
+		{
+			name:     "Postgres StringEqual Sensitive",
+			cfg:      UsePostgres(),
+			filter:   filters.StringMatchFilter{Field: "status", Value: "active", Method: filters.StringEqual, CaseSensitive: true},
+			wantSql:  "status = $1",
+			wantArgs: []any{"active"},
+		},
+		{
+			name:     "Postgres StringEqual Insensitive",
+			cfg:      UsePostgres(),
+			filter:   filters.StringMatchFilter{Field: "status", Value: "active", Method: filters.StringEqual, CaseSensitive: false},
+			wantSql:  "LOWER(status) = LOWER($1)",
+			wantArgs: []any{"active"},
+		},
+		{
+			name:     "Oracle StringEqual Insensitive",
+			cfg:      UseOracle(),
+			filter:   filters.StringMatchFilter{Field: "status", Value: "active", Method: filters.StringEqual, CaseSensitive: false},
+			wantSql:  "UPPER(status) = UPPER(:1)",
+			wantArgs: []any{"active"},
+		},
+		{
+			name:     "MsSqlServer StringEqual Insensitive",
+			cfg:      UseMsSqlServer(),
+			filter:   filters.StringMatchFilter{Field: "status", Value: "active", Method: filters.StringEqual, CaseSensitive: false},
+			wantSql:  "LOWER(status) = LOWER(@p1)",
+			wantArgs: []any{"active"},
+		},
 	}
 
 	for _, tc := range tests {
@@ -199,4 +228,45 @@ func TestStringMatchDialects(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestStringEqualDelegation(t *testing.T) {
+	t.Run("String Eq delegates with CaseSensitive true", func(tt *testing.T) {
+		cfg := UsePostgres().WithCaseSensitive(true)
+		sf, err := New(cfg, filters.Eq("name", "alice"))
+		if err != nil {
+			tt.Fatal(err)
+		}
+		if sf.String() != "name = $1" {
+			tt.Errorf("got %q, want %q", sf.String(), "name = $1")
+		}
+		if len(sf.Args()) != 1 || sf.Args()[0] != "alice" {
+			tt.Errorf("args mismatch: got %v", sf.Args())
+		}
+	})
+
+	t.Run("String Eq delegates with CaseSensitive false", func(tt *testing.T) {
+		cfg := UsePostgres().WithCaseSensitive(false)
+		sf, err := New(cfg, filters.Eq("name", "alice"))
+		if err != nil {
+			tt.Fatal(err)
+		}
+		if sf.String() != "LOWER(name) = LOWER($1)" {
+			tt.Errorf("got %q, want %q", sf.String(), "LOWER(name) = LOWER($1)")
+		}
+		if len(sf.Args()) != 1 || sf.Args()[0] != "alice" {
+			tt.Errorf("args mismatch: got %v", sf.Args())
+		}
+	})
+
+	t.Run("Non-Eq string comparison is not delegated to StringEqual", func(tt *testing.T) {
+		cfg := UsePostgres().WithCaseSensitive(false)
+		sf, err := New(cfg, filters.Gt("name", "alice"))
+		if err != nil {
+			tt.Fatal(err)
+		}
+		if sf.String() != "name > $1" {
+			tt.Errorf("got %q, want %q", sf.String(), "name > $1")
+		}
+	})
 }

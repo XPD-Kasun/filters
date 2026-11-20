@@ -1,6 +1,9 @@
 package sqlfilter
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // StringMatchDialect generates dialect-specific SQL fragments for string
 // matching operations. Each method returns:
@@ -13,21 +16,28 @@ import "fmt"
 // placeholder (e.g. $1, :1, @p1) and appends the returned args to the
 // argument list.
 type StringMatchDialect interface {
-	// Contains generates SQL for a substring search (LIKE '%value%').
+	// Generates SQL that checks a given string contains the value.
+	// Usual translation: LIKE '%value%'
 	Contains(field string, value any, insensitive bool) (string, []any, error)
 
-	// StartsWith generates SQL for a prefix search (LIKE 'value%').
+	// Generates SQL that checks a given string is at the begining of
+	// the provided value. Usual translation: LIKE 'value%'
 	StartsWith(field string, value any, insensitive bool) (string, []any, error)
 
-	// EndsWith generates SQL for a suffix search (LIKE '%value').
+	// Generates SQL that checks a given string is at the end of
+	// the provided value. Usual translation: LIKE '%value'
 	EndsWith(field string, value any, insensitive bool) (string, []any, error)
 
 	// Like generates SQL for a raw LIKE/ILIKE pattern supplied by the caller.
-	// The caller is responsible for including any LIKE wildcard characters.
+	// This is the one used for translating [filters.WildcardMatch]
 	Like(field string, pattern any, insensitive bool) (string, []any, error)
 
 	// Regex generates SQL for a regular-expression match.
 	Regex(field string, pattern any, insensitive bool) (string, []any, error)
+
+	// Checks string equality for the value passed using case-sensitive check.
+	// This should be used for string equality implementation for [filters.Eq].
+	StringEqual(field string, value any, insensitive bool) (string, []any, error)
 }
 
 // escClause returns " ESCAPE '<char>'" for a LIKE expression, or empty string
@@ -47,36 +57,47 @@ func toStr(v any) string {
 	return fmt.Sprintf("%v", v)
 }
 
-// escapeLikePattern escapes SQL LIKE metacharacters (% and _) in a literal
-// value using the dialect-configured escape character. Returns val unchanged
-// when escape is 0.
+// escapeLikePattern escapes and translate filter wildcard semantics
+// into SQL semantics. See [filters.WildcardMatch].
+//
+// eg:
+// escapeLikePattern("**sda_sd%fo*fd?df", '\\') -> *sda\_sd\%fo%fd_df
 func escapeLikePattern(val string, escape rune) string {
-	if escape == 0 {
+	if escape == 0 || escape > 127 {
 		return val
 	}
-	esc := string(escape)
-	// Escape the escape char itself first to avoid double-escaping.
-	val = replaceAll(val, esc, esc+esc)
-	val = replaceAll(val, "%", esc+"%")
-	val = replaceAll(val, "_", esc+"_")
-	return val
-}
+	esc := byte(escape)
+	var b strings.Builder
+	b.Grow(len(val))
 
-func replaceAll(s, old, new string) string {
-	out := []byte{}
-	for i := 0; i < len(s); {
-		if len(s)-i >= len(old) && s[i:i+len(old)] == old {
-			out = append(out, []byte(new)...)
-			i += len(old)
-		} else {
-			out = append(out, s[i])
-			i++
+	for i := 0; i < len(val); i++ {
+		c := val[i]
+
+		switch c {
+		case '*', '?':
+			// search rune forward to see if its ** or ?? while
+			// not exeeding the iteration beyond len(val).
+			if i+1 < len(val) && val[i+1] == c {
+				// * or ? escaped version
+				b.WriteByte(c)
+				i++
+			} else if c == '*' {
+				b.WriteByte('%')
+			} else {
+				b.WriteByte('_')
+			}
+
+		case '%', '_', esc:
+			b.WriteByte(esc)
+			b.WriteByte(c)
+
+		default:
+			b.WriteByte(c)
 		}
 	}
-	return string(out)
-}
 
-// ---- Postgres / CockroachDB ------------------------------------------------
+	return b.String()
+}
 
 // PostgresStringMatch implements [StringMatchDialect] for PostgreSQL and
 // CockroachDB. ILIKE is used for case-insensitive LIKE operations; ~ / ~*
@@ -118,7 +139,12 @@ func (d PostgresStringMatch) Regex(field string, pattern any, insensitive bool) 
 	return fmt.Sprintf("%s ~ ?", field), []any{toStr(pattern)}, nil
 }
 
-// ---- MySQL -----------------------------------------------------------------
+func (d PostgresStringMatch) StringEqual(field string, value any, insensitive bool) (string, []any, error) {
+	if insensitive {
+		return fmt.Sprintf("LOWER(%s) = LOWER(?)", field), []any{toStr(value)}, nil
+	}
+	return fmt.Sprintf("%s = ?", field), []any{toStr(value)}, nil
+}
 
 // MySQLStringMatch implements [StringMatchDialect] for MySQL.
 // MySQL LIKE is case-insensitive by default on non-binary columns, so plain
@@ -153,7 +179,12 @@ func (d MySQLStringMatch) Regex(field string, pattern any, insensitive bool) (st
 	return fmt.Sprintf("%s REGEXP ?", field), []any{toStr(pattern)}, nil
 }
 
-// ---- ClickHouse ------------------------------------------------------------
+func (d MySQLStringMatch) StringEqual(field string, value any, insensitive bool) (string, []any, error) {
+	if insensitive {
+		return fmt.Sprintf("LOWER(%s) = LOWER(?)", field), []any{toStr(value)}, nil
+	}
+	return fmt.Sprintf("%s = ?", field), []any{toStr(value)}, nil
+}
 
 // ClickHouseStringMatch implements [StringMatchDialect] for ClickHouse.
 // ILIKE is supported since v22.4; match() is used for regex.
@@ -191,6 +222,13 @@ func (d ClickHouseStringMatch) Regex(field string, pattern any, insensitive bool
 	// match() is always case-sensitive at the engine level.
 	// Callers may embed (?i) in the pattern for insensitivity.
 	return fmt.Sprintf("match(%s, ?)", field), []any{toStr(pattern)}, nil
+}
+
+func (d ClickHouseStringMatch) StringEqual(field string, value any, insensitive bool) (string, []any, error) {
+	if insensitive {
+		return fmt.Sprintf("LOWER(%s) = LOWER(?)", field), []any{toStr(value)}, nil
+	}
+	return fmt.Sprintf("%s = ?", field), []any{toStr(value)}, nil
 }
 
 // ---- Oracle ----------------------------------------------------------------
@@ -237,7 +275,12 @@ func (d OracleStringMatch) Regex(field string, pattern any, insensitive bool) (s
 	return fmt.Sprintf("REGEXP_LIKE(%s, ?)", field), []any{toStr(pattern)}, nil
 }
 
-// ---- MsSqlServer -----------------------------------------------------------
+func (d OracleStringMatch) StringEqual(field string, value any, insensitive bool) (string, []any, error) {
+	if insensitive {
+		return fmt.Sprintf("UPPER(%s) = UPPER(?)", field), []any{toStr(value)}, nil
+	}
+	return fmt.Sprintf("%s = ?", field), []any{toStr(value)}, nil
+}
 
 // MsSqlServerStringMatch implements [StringMatchDialect] for Microsoft SQL
 // Server. SQL Server has no ILIKE; LOWER(field) LIKE LOWER(?) is emitted for
@@ -279,7 +322,12 @@ func (d MsSqlServerStringMatch) Regex(field string, pattern any, insensitive boo
 	return fmt.Sprintf("%s LIKE ?", field), []any{toStr(pattern)}, nil
 }
 
-// ---- SQLite ----------------------------------------------------------------
+func (d MsSqlServerStringMatch) StringEqual(field string, value any, insensitive bool) (string, []any, error) {
+	if insensitive {
+		return fmt.Sprintf("LOWER(%s) = LOWER(?)", field), []any{toStr(value)}, nil
+	}
+	return fmt.Sprintf("%s = ?", field), []any{toStr(value)}, nil
+}
 
 // SQLiteStringMatch implements [StringMatchDialect] for SQLite.
 // SQLite LIKE is case-insensitive for ASCII by default; LOWER(field) LIKE
@@ -319,6 +367,13 @@ func (d SQLiteStringMatch) Like(field string, pattern any, insensitive bool) (st
 func (d SQLiteStringMatch) Regex(field string, pattern any, insensitive bool) (string, []any, error) {
 	// REGEXP requires a user-registered function in SQLite.
 	return fmt.Sprintf("%s REGEXP ?", field), []any{toStr(pattern)}, nil
+}
+
+func (d SQLiteStringMatch) StringEqual(field string, value any, insensitive bool) (string, []any, error) {
+	if insensitive {
+		return fmt.Sprintf("LOWER(%s) = LOWER(?)", field), []any{toStr(value)}, nil
+	}
+	return fmt.Sprintf("%s = ?", field), []any{toStr(value)}, nil
 }
 
 // defaultStringMatch returns the default [StringMatchDialect] implementation for the given [SqlVariant].

@@ -11,11 +11,14 @@ import (
 type StringMatchMethod string
 
 const (
-	Contains      StringMatchMethod = "Contains"
-	StartsWith    StringMatchMethod = "StartsWith"
-	EndsWith      StringMatchMethod = "EndsWith"
+	Contains   StringMatchMethod = "Contains"
+	StartsWith StringMatchMethod = "StartsWith"
+	EndsWith   StringMatchMethod = "EndsWith"
+	// Wildcard uses * and ? and to create a pattern that match against
+	// a given field.
 	WildcardMatch StringMatchMethod = "WildcardMatch"
 	Regex         StringMatchMethod = "Regex"
+	StringEqual   StringMatchMethod = "StringEqual"
 )
 
 type StringMatchFilter struct {

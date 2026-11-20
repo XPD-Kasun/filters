@@ -264,6 +264,7 @@ func TestSqlFilterLogging(t *testing.T) {
 	cfg := sqlfilter.UsePostgres().WithLogger(logger)
 	filter := f.And(
 		f.Eq("status", "active"),
+		f.Gt("priority", 1),
 		f.Between("age", 18, 65),
 	)
 
@@ -278,6 +279,9 @@ func TestSqlFilterLogging(t *testing.T) {
 	}
 	if !strings.Contains(logOutput, "level=DEBUG") || !strings.Contains(logOutput, "visiting comparison") {
 		t.Errorf("expected DEBUG log in output, got: %s", logOutput)
+	}
+	if !strings.Contains(logOutput, "visiting string match") {
+		t.Errorf("expected string match DEBUG log in output, got: %s", logOutput)
 	}
 }
 
