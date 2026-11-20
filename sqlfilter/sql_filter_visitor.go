@@ -207,10 +207,10 @@ func (v *SqlFilter) formatField(field string) (string, error) {
 				filters.ErrUnsupported, seg,
 			)
 		}
-		// Oracle: reject double-quote inside a double-quoted identifier.
-		if v.sqlConfig.Name == OracleVariant && close == '"' && strings.ContainsRune(seg, '"') {
+		// Reject quote characters inside the identifier if the dialect does not support escaping them.
+		if !v.sqlConfig.EscapingQuoteSupported && (strings.ContainsRune(seg, close) || strings.ContainsRune(seg, open)) {
 			return "", fmt.Errorf(
-				"%w: Oracle does not allow double-quotes inside a quoted identifier: %q",
+				"%w: dialect does not allow quote characters inside a quoted identifier: %q",
 				filters.ErrUnsupported, seg,
 			)
 		}

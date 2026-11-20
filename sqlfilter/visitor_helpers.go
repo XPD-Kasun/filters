@@ -100,8 +100,8 @@ func QuoteIdentifier(cfg SqlConfig, path string) (string, error) {
 		if strings.ContainsRune(seg, 0) {
 			return "", fmt.Errorf("sqlfilter: identifier %q contains a null byte", seg)
 		}
-		if cfg.Name == OracleVariant && close == '"' && strings.ContainsRune(seg, '"') {
-			return "", fmt.Errorf("sqlfilter: Oracle does not allow double-quotes inside a quoted identifier: %q", seg)
+		if !cfg.EscapingQuoteSupported && (strings.ContainsRune(seg, close) || strings.ContainsRune(seg, open)) {
+			return "", fmt.Errorf("sqlfilter: dialect does not allow quote characters inside a quoted identifier: %q", seg)
 		}
 		escaped := strings.ReplaceAll(seg, string(close), string(close)+string(close))
 		out[i] = string(open) + escaped + string(close)

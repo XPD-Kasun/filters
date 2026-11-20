@@ -116,8 +116,9 @@ type SqlConfig struct {
 	Placeholder PlaceholderFunc
 
 	// Quoting
-	quoteStyle  QuoteStyle
-	quotePolicy QuotePolicy
+	quoteStyle             QuoteStyle
+	quotePolicy            QuotePolicy
+	EscapingQuoteSupported bool
 
 	// IdentMaxLen is the maximum byte length of an unquoted identifier. 0 means no limit.
 	IdentMaxLen int
@@ -173,6 +174,12 @@ func (c SqlConfig) WithQuoting(policy QuotePolicy) SqlConfig {
 	return c
 }
 
+// WithEscapingQuoteSupported returns a copy of the SqlConfig with EscapingQuoteSupported set.
+func (c SqlConfig) WithEscapingQuoteSupported(supported bool) SqlConfig {
+	c.EscapingQuoteSupported = supported
+	return c
+}
+
 // WithPlaceholder returns a copy of the SqlConfig with a custom PlaceholderFunc.
 func (c SqlConfig) WithPlaceholder(fn PlaceholderFunc) SqlConfig {
 	c.Placeholder = fn
@@ -217,30 +224,32 @@ func (c SqlConfig) GetQuotePolicy() QuotePolicy {
 //   - Parameter limit: 65535
 func UsePostgres() SqlConfig {
 	return SqlConfig{
-		Name:          PostgresVariant,
-		Placeholder:   DollarPlaceholder,
-		quoteStyle:    QuoteDouble,
-		quotePolicy:   QuoteNever,
-		IdentMaxLen:   63,
-		ParamLimit:    65535,
-		LikeEscape:    '\\',
-		StringMatch:   PostgresStringMatch{Escape: '\\'},
-		CaseSensitive: true,
+		Name:                   PostgresVariant,
+		Placeholder:            DollarPlaceholder,
+		quoteStyle:             QuoteDouble,
+		quotePolicy:            QuoteNever,
+		EscapingQuoteSupported: true,
+		IdentMaxLen:            63,
+		ParamLimit:             65535,
+		LikeEscape:             '\\',
+		StringMatch:            PostgresStringMatch{Escape: '\\'},
+		CaseSensitive:          true,
 	}
 }
 
 // UseCockroachDB returns a SqlConfig preset for CockroachDB (Postgres-compatible).
 func UseCockroachDB() SqlConfig {
 	return SqlConfig{
-		Name:          CockroachDBVariant,
-		Placeholder:   DollarPlaceholder,
-		quoteStyle:    QuoteDouble,
-		quotePolicy:   QuoteNever,
-		IdentMaxLen:   63,
-		ParamLimit:    65535,
-		LikeEscape:    '\\',
-		StringMatch:   PostgresStringMatch{Escape: '\\'},
-		CaseSensitive: true,
+		Name:                   CockroachDBVariant,
+		Placeholder:            DollarPlaceholder,
+		quoteStyle:             QuoteDouble,
+		quotePolicy:            QuoteNever,
+		EscapingQuoteSupported: true,
+		IdentMaxLen:            63,
+		ParamLimit:             65535,
+		LikeEscape:             '\\',
+		StringMatch:            PostgresStringMatch{Escape: '\\'},
+		CaseSensitive:          true,
 	}
 }
 
@@ -252,45 +261,48 @@ func UseCockroachDB() SqlConfig {
 //   - Parameter limit: 65535
 func UseMySQL() SqlConfig {
 	return SqlConfig{
-		Name:          MySqlVariant,
-		Placeholder:   QuestionPlaceholder,
-		quoteStyle:    QuoteBacktick,
-		quotePolicy:   QuoteNever,
-		IdentMaxLen:   64,
-		ParamLimit:    65535,
-		LikeEscape:    '\\', // MySQL treats \ specially; callers may override.
-		StringMatch:   MySQLStringMatch{Escape: '\\'},
-		CaseSensitive: true,
+		Name:                   MySqlVariant,
+		Placeholder:            QuestionPlaceholder,
+		quoteStyle:             QuoteBacktick,
+		quotePolicy:            QuoteNever,
+		EscapingQuoteSupported: true,
+		IdentMaxLen:            64,
+		ParamLimit:             65535,
+		LikeEscape:             '\\', // MySQL treats \ specially; callers may override.
+		StringMatch:            MySQLStringMatch{Escape: '\\'},
+		CaseSensitive:          true,
 	}
 }
 
 // UseClickHouse returns a SqlConfig preset for ClickHouse.
 func UseClickHouse() SqlConfig {
 	return SqlConfig{
-		Name:          ClickHouseVariant,
-		Placeholder:   QuestionPlaceholder,
-		quoteStyle:    QuoteBacktick,
-		quotePolicy:   QuoteNever,
-		IdentMaxLen:   0,
-		ParamLimit:    0,
-		LikeEscape:    '\\',
-		StringMatch:   ClickHouseStringMatch{Escape: '\\'},
-		CaseSensitive: true,
+		Name:                   ClickHouseVariant,
+		Placeholder:            QuestionPlaceholder,
+		quoteStyle:             QuoteBacktick,
+		quotePolicy:            QuoteNever,
+		EscapingQuoteSupported: true,
+		IdentMaxLen:            0,
+		ParamLimit:             0,
+		LikeEscape:             '\\',
+		StringMatch:            ClickHouseStringMatch{Escape: '\\'},
+		CaseSensitive:          true,
 	}
 }
 
 // UseSQLite returns a SqlConfig preset for SQLite.
 func UseSQLite() SqlConfig {
 	return SqlConfig{
-		Name:          SQLiteVariant,
-		Placeholder:   QuestionPlaceholder,
-		quoteStyle:    QuoteDouble,
-		quotePolicy:   QuoteNever,
-		IdentMaxLen:   0,
-		ParamLimit:    0,
-		LikeEscape:    '\\',
-		StringMatch:   SQLiteStringMatch{Escape: '\\'},
-		CaseSensitive: true,
+		Name:                   SQLiteVariant,
+		Placeholder:            QuestionPlaceholder,
+		quoteStyle:             QuoteDouble,
+		quotePolicy:            QuoteNever,
+		EscapingQuoteSupported: true,
+		IdentMaxLen:            0,
+		ParamLimit:             0,
+		LikeEscape:             '\\',
+		StringMatch:            SQLiteStringMatch{Escape: '\\'},
+		CaseSensitive:          true,
 	}
 }
 
@@ -302,16 +314,17 @@ func UseSQLite() SqlConfig {
 //   - NumericBooleans: true (SQL Server doesnt have a native BOOLEAN type)
 func UseMsSqlServer() SqlConfig {
 	return SqlConfig{
-		Name:            MsSqlServerVariant,
-		Placeholder:     AtpPlaceholder,
-		quoteStyle:      QuoteBracket,
-		quotePolicy:     QuoteNever,
-		IdentMaxLen:     128,
-		ParamLimit:      2100,
-		NumericBooleans: true,
-		LikeEscape:      '\\',
-		StringMatch:     MsSqlServerStringMatch{Escape: '\\'},
-		CaseSensitive:   true,
+		Name:                   MsSqlServerVariant,
+		Placeholder:            AtpPlaceholder,
+		quoteStyle:             QuoteBracket,
+		quotePolicy:            QuoteNever,
+		EscapingQuoteSupported: true,
+		IdentMaxLen:            128,
+		ParamLimit:             2100,
+		NumericBooleans:        true,
+		LikeEscape:             '\\',
+		StringMatch:            MsSqlServerStringMatch{Escape: '\\'},
+		CaseSensitive:          true,
 	}
 }
 
@@ -323,16 +336,17 @@ func UseMsSqlServer() SqlConfig {
 //   - NumericBooleans: true (Oracle does not have BOOLEAN type below 12c)
 func UseOracle() SqlConfig {
 	return SqlConfig{
-		Name:            OracleVariant,
-		Placeholder:     ColonPlaceholder,
-		quoteStyle:      QuoteDouble,
-		quotePolicy:     QuoteNever,
-		IdentMaxLen:     128,
-		ParamLimit:      0,
-		NumericBooleans: true,
-		LikeEscape:      '\\',
-		StringMatch:     OracleStringMatch{Escape: '\\'},
-		CaseSensitive:   true,
+		Name:                   OracleVariant,
+		Placeholder:            ColonPlaceholder,
+		quoteStyle:             QuoteDouble,
+		quotePolicy:            QuoteNever,
+		EscapingQuoteSupported: false,
+		IdentMaxLen:            128,
+		ParamLimit:             0,
+		NumericBooleans:        true,
+		LikeEscape:             '\\',
+		StringMatch:            OracleStringMatch{Escape: '\\'},
+		CaseSensitive:          true,
 	}
 }
 
